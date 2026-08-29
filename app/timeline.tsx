@@ -56,6 +56,24 @@ function forgetPalette(): void {
   palette = null;
 }
 
+/** The cross that marks a failure, drawn over whatever shape the step had.
+ *  Failure is never signalled by colour alone: the tick itself changes shape,
+ *  a marker appears on the rail below, and the panels say "failed" in words. */
+function drawFail(g: CanvasRenderingContext2D, x: number, y: number, wide: boolean) {
+  if (!wide) {
+    // At tight spacing a failure is twice as wide and taller than its
+    // neighbours, so it still reads as different without any colour.
+    g.fillRect(x - 1, y - 8, 2, 16);
+    return;
+  }
+  g.beginPath();
+  g.moveTo(x - 4.2, y - 4.2);
+  g.lineTo(x + 4.2, y + 4.2);
+  g.moveTo(x + 4.2, y - 4.2);
+  g.lineTo(x - 4.2, y + 4.2);
+  g.stroke();
+}
+
 /** Same eight shapes as glyphs.tsx, drawn at tick scale. */
 function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: number, wide: boolean) {
   if (!wide) {
@@ -193,23 +211,31 @@ export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
       g.fillRect(a, AXIS_Y - 7, b - a, 14);
     }
 
-    // ticks
+    // Ticks, in two passes: the ordinary ones first, then the failures over
+    // the top, so a failure is never painted over by the step next to it.
     g.lineWidth = 1.25;
     let lastKind = "";
-    let lastErr = false;
     for (let i = 0; i < n; i++) {
       const s = steps[i];
-      if (s.kind !== lastKind || s.err !== lastErr) {
-        const col = s.err ? risk : s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
+      if (s.err) continue;
+      if (s.kind !== lastKind) {
+        const col = s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
         g.fillStyle = col;
         g.strokeStyle = col;
-        g.globalAlpha = s.kind === "meta" ? 0.45 : s.err ? 1 : 0.85;
+        g.globalAlpha = s.kind === "meta" ? 0.45 : 0.85;
         lastKind = s.kind;
-        lastErr = s.err;
       }
       drawGlyph(g, s.kind, xOf(i, w), RAIL_Y, wide);
     }
     g.globalAlpha = 1;
+    g.fillStyle = risk;
+    g.strokeStyle = risk;
+    g.lineWidth = 1.6;
+    for (let i = 0; i < n; i++) {
+      if (!steps[i].err) continue;
+      drawFail(g, xOf(i, w), RAIL_Y, wide);
+    }
+    g.lineWidth = 1.25;
 
     // failure rail: presence and position, not just colour
     g.fillStyle = risk;
