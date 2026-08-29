@@ -78,6 +78,12 @@ export default function Page() {
 
   const goToGlobal = useCallback((gi: number) => setGpos(gi), []);
 
+  /** The number a step is called on screen: its position in the visible view. */
+  const shownIndex = useCallback(
+    (gi: number) => (view && view.at[gi] >= 0 ? view.at[gi] + 1 : 0),
+    [view],
+  );
+
   // ---- loading ------------------------------------------------------------
 
   const reset = useCallback(() => {
@@ -338,8 +344,15 @@ export default function Page() {
           curStep={curGlobal}
           redacted={tape.meta.redacted}
           onSelectStep={goToGlobal}
+          shownIndex={shownIndex}
         />
-        <StepDetail tape={tape} curStep={curGlobal} pairs={pairs} onSelectStep={goToGlobal} />
+        <StepDetail
+          tape={tape}
+          curStep={curGlobal}
+          pairs={pairs}
+          onSelectStep={goToGlobal}
+          shownIndex={shownIndex}
+        />
       </div>
     </main>
   );

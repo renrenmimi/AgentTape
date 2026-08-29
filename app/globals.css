@@ -266,6 +266,10 @@ kbd {
   padding: 8px 14px;
   margin-left: auto;
   flex: 0 0 auto;
+  position: sticky;
+  right: 0;
+  background: var(--bg-2);
+  border-left: 1px solid var(--border);
 }
 
 /* ---------- tracks (timeline + context chart) ---------- */

@@ -30,9 +30,10 @@ type Props = {
   curStep: number;
   redacted: boolean;
   onSelectStep: (globalIndex: number) => void;
+  shownIndex: (globalIndex: number) => number;
 };
 
-export default function MessagesPanel({ entries, steps, curStep, redacted, onSelectStep }: Props) {
+export default function MessagesPanel({ entries, steps, curStep, redacted, onSelectStep, shownIndex }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState<Set<number>>(() => new Set());
   const [follow, setFollow] = useState(true);
@@ -185,7 +186,7 @@ export default function MessagesPanel({ entries, steps, curStep, redacted, onSel
                     onClick={() => onSelectStep(s.i)}
                     aria-current={s.i === curStep ? "step" : undefined}
                   >
-                    <span className="blk-i">{fmtInt(s.i + 1)}</span>
+                    <span className="blk-i">{fmtInt(shownIndex(s.i) || s.i + 1)}</span>
                     <span className="blk-kind">{s.tool || KIND_LABEL[s.kind]}</span>
                     <span className="blk-sum">
                       {redacted ? <em style={{ opacity: 0.7 }}>{s.preview}</em> : s.preview}
@@ -227,7 +228,7 @@ export default function MessagesPanel({ entries, steps, curStep, redacted, onSel
               {rows}
             </div>
             <p className="list-foot">
-              {fmtInt(Math.max(0, visible))} entries so far · {fmtInt(curStep + 1)} steps replayed
+              {fmtInt(Math.max(0, visible))} entries so far · {fmtInt(shownIndex(curStep) || curStep + 1)} steps replayed
             </p>
           </>
         ) : (

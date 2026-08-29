@@ -27,6 +27,8 @@ type Props = {
   curStep: number;
   pairs: Map<number, number>;
   onSelectStep: (globalIndex: number) => void;
+  /** What to call a step on screen — its position in the visible view. */
+  shownIndex: (globalIndex: number) => number;
 };
 
 function durationBetween(a: Step, b: Step): number {
@@ -125,7 +127,7 @@ function BodyView({ body, title, step }: { body: StepBody | null; title: string;
   );
 }
 
-export default function StepDetail({ tape, curStep, pairs, onSelectStep }: Props) {
+export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIndex }: Props) {
   const steps = tape.steps;
   const step = steps[curStep];
   const [body, setBody] = useState<StepBody | null>(null);
@@ -172,7 +174,7 @@ export default function StepDetail({ tape, curStep, pairs, onSelectStep }: Props
   return (
     <section className="pane" aria-label="Step detail">
       <div className="pane-head">
-        <h2>Step {fmtInt(step.i + 1)}</h2>
+        <h2>Step {fmtInt(shownIndex(step.i) || step.i + 1)}</h2>
         <span className="spacer" />
         <span className="entry-tok">
           {tape.meta.source === "jsonl"
@@ -243,7 +245,7 @@ export default function StepDetail({ tape, curStep, pairs, onSelectStep }: Props
                       className="btn btn-sm"
                       onClick={() => onSelectStep(mate.i)}
                     >
-                      go to step {fmtInt(mate.i + 1)}
+                      go to step {fmtInt(shownIndex(mate.i) || mate.i + 1)}
                     </button>
                     {pairDur > 0 && (
                       <span style={{ marginLeft: 8, color: "var(--text-3)" }}>
