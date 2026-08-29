@@ -1,0 +1,434 @@
+"use client";
+
+// The timeline: one tick per step on top, real elapsed time underneath.
+//
+// Two canvases sit on top of each other. The lower one holds the ticks, the
+// failure rail and the time axis, and is repainted only when the tape, the
+// size or the theme changes. The upper one holds the playhead and is repainted
+// on every move — it is two lines and a connector, so dragging across ten
+// thousand steps costs almost nothing.
+//
+// A focusable div covers both and carries the ARIA slider semantics, because
+// canvas has none.
+
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { IDLE_GAP_MS, type Step } from "@/lib/format";
+import { fmtDuration } from "@/lib/summary";
+import { KIND_LABEL } from "./glyphs";
+
+// Four bands, top to bottom: the tick rail, the failure rail, a row of time
+// labels, and the elapsed-time axis. They are laid out by hand because they
+// have to stay clear of each other at every width.
+const PAD = 8;
+const RAIL_Y = 20;      // centre of the tick rail
+const RAIL_H = 30;
+const FAIL_Y = 45;      // centre of the failure rail
+const LABEL_Y = 58;     // baseline of the time labels
+const AXIS_Y = 72;      // centre of the elapsed-time axis
+
+type Props = {
+  steps: Step[];
+  pos: number;
+  onPos: (n: number) => void;
+  height?: number;
+};
+
+// Canvas colours live in CSS custom properties so themes reach the pixels, but
+// reading them forces a style recalc. They are read once per theme change and
+// held, because paintHead runs on every frame of a drag.
+const NAMES = ["--tick", "--tick-tool", "--risk", "--grid", "--text-3", "--idle", "--mono", "--accent"];
+type Palette = Record<string, string>;
+let palette: Palette | null = null;
+
+function readPalette(): Palette {
+  const css = getComputedStyle(document.documentElement);
+  const out: Palette = {};
+  for (const n of NAMES) out[n] = css.getPropertyValue(n).trim();
+  return out;
+}
+
+function cssVar(name: string): string {
+  if (!palette) palette = readPalette();
+  return palette[name] ?? "";
+}
+
+function forgetPalette(): void {
+  palette = null;
+}
+
+/** Same eight shapes as glyphs.tsx, drawn at tick scale. */
+function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: number, wide: boolean) {
+  if (!wide) {
+    // Below ~3px of spacing the shapes stop being distinguishable, so the
+    // rail degrades to a density plot rather than lying about resolution.
+    g.fillRect(x - 0.5, y - 5, 1, 10);
+    return;
+  }
+  switch (kind) {
+    case "user":
+      g.fillRect(x - 2.5, y - 2.5, 5, 5);
+      break;
+    case "text":
+      g.fillRect(x - 3.5, y - 1, 7, 2);
+      break;
+    case "thinking":
+      g.beginPath();
+      g.arc(x, y, 2.4, 0, Math.PI * 2);
+      g.stroke();
+      break;
+    case "tool-call":
+      g.beginPath();
+      g.moveTo(x, y - 3.4);
+      g.lineTo(x + 3.2, y + 2.4);
+      g.lineTo(x - 3.2, y + 2.4);
+      g.closePath();
+      g.fill();
+      break;
+    case "tool-result":
+      g.beginPath();
+      g.moveTo(x, y + 3.4);
+      g.lineTo(x + 3.2, y - 2.4);
+      g.lineTo(x - 3.2, y - 2.4);
+      g.closePath();
+      g.stroke();
+      break;
+    case "system":
+      g.beginPath();
+      g.moveTo(x - 3, y);
+      g.lineTo(x + 3, y);
+      g.moveTo(x, y - 3);
+      g.lineTo(x, y + 3);
+      g.stroke();
+      break;
+    case "attachment":
+      g.beginPath();
+      g.moveTo(x, y - 3);
+      g.lineTo(x + 3, y);
+      g.lineTo(x, y + 3);
+      g.lineTo(x - 3, y);
+      g.closePath();
+      g.stroke();
+      break;
+    default:
+      g.beginPath();
+      g.arc(x, y, 1.2, 0, Math.PI * 2);
+      g.fill();
+  }
+}
+
+export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const base = useRef<HTMLCanvasElement>(null);
+  const head = useRef<HTMLCanvasElement>(null);
+  const hit = useRef<HTMLDivElement>(null);
+  const size = useRef({ w: 0, h: height });
+  const dragging = useRef(false);
+  const raf = useRef(0);
+  const pending = useRef(-1);
+
+  const n = steps.length;
+  const firstT = n ? steps[0].t : 0;
+  const lastT = n ? steps[n - 1].t : 0;
+  const span = Math.max(1, lastT - firstT);
+
+  const xOf = useCallback(
+    (i: number, w: number) => PAD + ((i + 0.5) * (w - PAD * 2)) / Math.max(1, n),
+    [n],
+  );
+  const iOf = useCallback(
+    (x: number, w: number) =>
+      Math.max(0, Math.min(n - 1, Math.floor(((x - PAD) / (w - PAD * 2)) * n))),
+    [n],
+  );
+  const tx = useCallback(
+    (t: number, w: number) => PAD + ((t - firstT) / span) * (w - PAD * 2),
+    [firstT, span],
+  );
+
+  // ---- static layer -------------------------------------------------------
+
+  const paintBase = useCallback(() => {
+    const cv = base.current;
+    const el = wrap.current;
+    if (!cv || !el || !n) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    size.current = { w, h };
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+
+    const tick = cssVar("--tick") || "#788292";
+    const tool = cssVar("--tick-tool") || "#8f86c4";
+    const risk = cssVar("--risk") || "#e47777";
+    const grid = cssVar("--grid") || "rgba(255,255,255,.07)";
+    const dim = cssVar("--text-3") || "#788292";
+    const idle = cssVar("--idle") || "rgba(255,255,255,.14)";
+
+    // rail baselines
+    g.strokeStyle = grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(PAD, RAIL_Y + RAIL_H / 2 + 0.5);
+    g.lineTo(w - PAD, RAIL_Y + RAIL_H / 2 + 0.5);
+    g.moveTo(PAD, AXIS_Y + 0.5);
+    g.lineTo(w - PAD, AXIS_Y + 0.5);
+    g.stroke();
+
+    const spacing = (w - PAD * 2) / Math.max(1, n);
+    const wide = spacing >= 3;
+
+    // idle gaps, shaded on the time axis so a 40-minute pause reads as a pause
+    g.fillStyle = idle;
+    for (let i = 1; i < n; i++) {
+      const d = steps[i].t - steps[i - 1].t;
+      if (d <= IDLE_GAP_MS) continue;
+      const a = tx(steps[i - 1].t, w);
+      const b = tx(steps[i].t, w);
+      if (b - a < 1.5) continue;
+      g.fillRect(a, AXIS_Y - 7, b - a, 14);
+    }
+
+    // ticks
+    g.lineWidth = 1.25;
+    let lastKind = "";
+    let lastErr = false;
+    for (let i = 0; i < n; i++) {
+      const s = steps[i];
+      if (s.kind !== lastKind || s.err !== lastErr) {
+        const col = s.err ? risk : s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
+        g.fillStyle = col;
+        g.strokeStyle = col;
+        g.globalAlpha = s.kind === "meta" ? 0.45 : s.err ? 1 : 0.85;
+        lastKind = s.kind;
+        lastErr = s.err;
+      }
+      drawGlyph(g, s.kind, xOf(i, w), RAIL_Y, wide);
+    }
+    g.globalAlpha = 1;
+
+    // failure rail: presence and position, not just colour
+    g.fillStyle = risk;
+    for (let i = 0; i < n; i++) {
+      if (!steps[i].err) continue;
+      const x = xOf(i, w);
+      g.beginPath();
+      g.moveTo(x, FAIL_Y + 3);
+      g.lineTo(x + 3, FAIL_Y - 3);
+      g.lineTo(x - 3, FAIL_Y - 3);
+      g.closePath();
+      g.fill();
+    }
+
+    // time axis marks
+    g.fillStyle = dim;
+    g.globalAlpha = 0.75;
+    for (let i = 0; i < n; i++) {
+      g.fillRect(tx(steps[i].t, w) - 0.4, AXIS_Y - 3, 0.8, 6);
+    }
+    g.globalAlpha = 1;
+
+    // time labels at the ends plus the largest gap in the middle
+    g.font = "9px " + (cssVar("--mono") || "monospace");
+    g.fillStyle = dim;
+    g.textBaseline = "middle";
+    if (lastT > firstT) {
+      g.textAlign = "left";
+      g.fillText(new Date(firstT).toLocaleString(), PAD, LABEL_Y);
+      g.textAlign = "right";
+      g.fillText(fmtDuration(lastT - firstT) + " wall", w - PAD, LABEL_Y);
+      let bi = -1;
+      let bd = 0;
+      for (let i = 1; i < n; i++) {
+        const d = steps[i].t - steps[i - 1].t;
+        if (d > bd) { bd = d; bi = i; }
+      }
+      if (bi > 0 && bd > IDLE_GAP_MS) {
+        const a = tx(steps[bi - 1].t, w);
+        const b = tx(steps[bi].t, w);
+        if (b - a > 46) {
+          g.textAlign = "center";
+          g.fillText("idle " + fmtDuration(bd), (a + b) / 2, LABEL_Y);
+        }
+      }
+    }
+  }, [n, steps, tx, xOf, firstT, lastT]);
+
+  // ---- playhead layer -----------------------------------------------------
+
+  const paintHead = useCallback(
+    (p: number) => {
+      const cv = head.current;
+      const el = wrap.current;
+      if (!cv || !el || !n) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+        cv.width = Math.round(w * dpr);
+        cv.height = Math.round(h * dpr);
+      }
+      const g = cv.getContext("2d");
+      if (!g) return;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+      const s = steps[Math.max(0, Math.min(n - 1, p))];
+      if (!s) return;
+
+      const accent = cssVar("--accent") || "#8a7cf6";
+      const x = xOf(p, w);
+      const t2 = tx(s.t, w);
+
+      g.strokeStyle = accent;
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(Math.round(x) + 0.5, 4);
+      g.lineTo(Math.round(x) + 0.5, FAIL_Y + 5);
+      g.stroke();
+
+      // the connector: where this step sits in step order vs in real time
+      g.globalAlpha = 0.55;
+      g.setLineDash([2, 2]);
+      g.beginPath();
+      g.moveTo(x, FAIL_Y + 5);
+      g.lineTo(t2, AXIS_Y - 7);
+      g.stroke();
+      g.setLineDash([]);
+      g.globalAlpha = 1;
+
+      g.beginPath();
+      g.moveTo(Math.round(t2) + 0.5, AXIS_Y - 7);
+      g.lineTo(Math.round(t2) + 0.5, AXIS_Y + 7);
+      g.stroke();
+
+      g.fillStyle = accent;
+      g.beginPath();
+      g.moveTo(x, 6);
+      g.lineTo(x + 4.5, 0);
+      g.lineTo(x - 4.5, 0);
+      g.closePath();
+      g.fill();
+    },
+    [n, steps, tx, xOf],
+  );
+
+  useLayoutEffect(() => {
+    paintBase();
+    paintHead(pos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paintBase]);
+
+  useEffect(() => { paintHead(pos); }, [pos, paintHead]);
+
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { paintBase(); paintHead(pos); });
+    ro.observe(el);
+    const onTheme = () => { forgetPalette(); paintBase(); paintHead(pos); };
+    window.addEventListener("agenttape:theme", onTheme);
+    return () => { ro.disconnect(); window.removeEventListener("agenttape:theme", onTheme); };
+  }, [paintBase, paintHead, pos]);
+
+  // ---- interaction --------------------------------------------------------
+
+  // One state commit per frame. Dragging fires pointermove far faster than
+  // React can usefully re-render a 5,000-row panel.
+  const commit = useCallback(
+    (i: number) => {
+      pending.current = i;
+      paintHead(i);
+      if (raf.current) return;
+      raf.current = requestAnimationFrame(() => {
+        raf.current = 0;
+        if (pending.current >= 0) onPos(pending.current);
+      });
+    },
+    [onPos, paintHead],
+  );
+
+  const fromEvent = useCallback(
+    (e: { clientX: number }) => {
+      const el = wrap.current;
+      if (!el) return 0;
+      const r = el.getBoundingClientRect();
+      return iOf(e.clientX - r.left, r.width);
+    },
+    [iOf],
+  );
+
+  useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+
+  const onDown = (e: React.PointerEvent) => {
+    if (!n) return;
+    dragging.current = true;
+    hit.current?.setPointerCapture(e.pointerId);
+    commit(fromEvent(e));
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    commit(fromEvent(e));
+  };
+  const onUp = (e: React.PointerEvent) => {
+    dragging.current = false;
+    try { hit.current?.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+  };
+
+  const jumpFail = useCallback(
+    (dir: 1 | -1) => {
+      for (let i = pos + dir; i >= 0 && i < n; i += dir) {
+        if (steps[i].err) { onPos(i); return; }
+      }
+    },
+    [pos, n, steps, onPos],
+  );
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!n) return;
+    const big = e.shiftKey ? 10 : 1;
+    let next = pos;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") next = pos + big;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") next = pos - big;
+    else if (e.key === "PageDown") next = pos + 50;
+    else if (e.key === "PageUp") next = pos - 50;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = n - 1;
+    else if (e.key === "n" || e.key === "N") { e.preventDefault(); jumpFail(1); return; }
+    else if (e.key === "p" || e.key === "P") { e.preventDefault(); jumpFail(-1); return; }
+    else return;
+    e.preventDefault();
+    onPos(Math.max(0, Math.min(n - 1, next)));
+  };
+
+  const cur = steps[Math.max(0, Math.min(n - 1, pos))];
+  const valueText = cur
+    ? `step ${pos + 1} of ${n}, ${KIND_LABEL[cur.kind]}${cur.tool ? " " + cur.tool : ""}${cur.err ? ", failed" : ""}`
+    : "no steps";
+
+  return (
+    <div className="track" ref={wrap} style={{ height }}>
+      <canvas ref={base} aria-hidden />
+      <canvas ref={head} aria-hidden />
+      <div
+        className="track-hit"
+        ref={hit}
+        role="slider"
+        tabIndex={0}
+        aria-label="Playhead. Arrow keys step, Home and End jump to the ends, n and p jump to the next and previous failed step."
+        aria-valuemin={1}
+        aria-valuemax={Math.max(1, n)}
+        aria-valuenow={pos + 1}
+        aria-valuetext={valueText}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        onKeyDown={onKey}
+      />
+    </div>
+  );
+}
