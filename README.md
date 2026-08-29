@@ -55,8 +55,8 @@ loopback:
 ```
   #   project                                   session     size   lines  tools  modified
   ──────────────────────────────────────────────────────────────────────────────────────
-  1   -Users-you-code-some-project              7bd54caf  76.6 MB  10,757  2,660  2h ago
-  2   -Users-you-code-another-one               fcbb6862   5.4 MB   1,268    296  1d ago
+  1   -Users-you-code-some-project              00000000  76.6 MB  10,757  2,660  2h ago
+  2   -Users-you-code-another-one               11111111   5.4 MB   1,268    296  1d ago
 ```
 
 Structure only. The helper never reads or prints a session title — titles are
