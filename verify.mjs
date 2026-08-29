@@ -497,5 +497,26 @@ ok(/realpath/i.test(helperCode), "the helper resolves symlinks before checking t
 ok(helperCode.includes("PROJECTS"), "the helper confines itself to the projects directory");
 ok(!/customTitle|aiTitle|lastPrompt/.test(helperCode), "the helper never reads a session title");
 
+// The helper used to resolve ../out and tell the user to "build to ./out".
+// Nothing in this repository writes an out/ directory — `next build` writes
+// .next — so following the instruction failed. Every directory the helper
+// resolves or advertises must be one that exists or that a script produces.
+const PRODUCED_BY_A_SCRIPT = new Set([".next"]); // what `next build` writes
+const helperResolves = [...helperCode.matchAll(/new URL\(\s*["']\.\.\/([^"'/]+)/g)].map((m) => m[1]);
+for (const dir of helperResolves) {
+  ok(existsSync(join(root, dir)) || PRODUCED_BY_A_SCRIPT.has(dir),
+    "the helper only resolves a directory this repository can produce: " + dir);
+}
+// Same rule for what it tells the user, which is where the original bug lived.
+const advertised = [...helper.matchAll(/(?:^|[\s"'`(])\.\/([a-z][a-z0-9_-]*)\/?(?=[\s"'`.,)]|$)/gm)]
+  .map((m) => m[1])
+  .filter((d) => d !== "bin");
+for (const dir of new Set(advertised)) {
+  ok(existsSync(join(root, dir)) || PRODUCED_BY_A_SCRIPT.has(dir),
+    "the helper never advertises a directory this repository cannot produce: ./" + dir);
+}
+ok(!/serveStatic|APP_ROOT/.test(helperCode),
+  "the helper has one path-resolution surface, not two");
+
 console.log(`\n${checked - failed}/${checked} checks passed`);
 process.exit(failed ? 1 : 0);
