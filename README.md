@@ -1,5 +1,7 @@
 # AgentTape
 
+[![ci](https://github.com/renrenmimi/AgentTape/actions/workflows/ci.yml/badge.svg)](https://github.com/renrenmimi/AgentTape/actions/workflows/ci.yml)
+
 **Replay a Claude Code session that already happened.**
 
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
