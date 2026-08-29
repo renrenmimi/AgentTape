@@ -51,17 +51,35 @@ export function placeholderFor(step: { kind: string; chars: number }): string {
   return placeholder(BODY_WORD[step.kind] ?? "body", step.chars);
 }
 
+/**
+ * Correlation ids are rewritten to per-tape sequence numbers: `t1`, `m4`.
+ * Pairing and grouping still work, and the original opaque ids — which do turn
+ * up quoted inside message bodies — stop travelling with the export.
+ */
+export type IdBook = { of: Map<string, string>; next: Map<string, number> };
+
+export const newIdBook = (): IdBook => ({ of: new Map(), next: new Map() });
+
+export function aliasId(book: IdBook, raw: string, prefix: string): string {
+  const hit = book.of.get(raw);
+  if (hit) return hit;
+  const n = (book.next.get(prefix) ?? 0) + 1;
+  book.next.set(prefix, n);
+  const made = prefix + n;
+  book.of.set(raw, made);
+  return made;
+}
+
 /** Redact one indexed step. Every free-form string is replaced or whitelisted. */
-export function redactStep(s: Step): TapeStep {
+export function redactStep(s: Step, book: IdBook = newIdBook()): TapeStep {
   const t = stepToTape(s);
   t.p = placeholderFor(s);
   t.y = scrubName(t.y ?? "", "type");
   if (t.n) t.n = scrubName(t.n, "tool");
   if (t.d) t.d = scrubName(t.d, "model");
   if (t.w && !ERROR_LABELS.has(t.w)) t.w = "error";
-  // Opaque correlation ids: kept so calls still pair, but capped and shaped.
-  if (t.u) t.u = scrubName(t.u.slice(0, 80), "id");
-  if (t.m) t.m = scrubName(t.m.slice(0, 80), "id");
+  if (t.u) t.u = aliasId(book, t.u, "t");
+  if (t.m) t.m = aliasId(book, t.m, "m");
   if (t.z) t.z = [t.z[0], t.z[1], t.z[2], scrubName(String(t.z[3]), "trigger")];
   return t;
 }
@@ -71,13 +89,14 @@ export function redactStep(s: Step): TapeStep {
  * function that can reach the transcript, is never called.
  */
 export function redactTape(tape: Tape): TapeFile {
+  const book = newIdBook();
   const file: TapeFile = {
     format: TAPE_FORMAT,
     redacted: true,
     note:
       "Structure only. Every text body, tool input, tool result, path and URL " +
-      "was replaced by a placeholder that keeps its length. Safe to attach to " +
-      "a bug report.",
+      "was replaced by a placeholder that keeps its length; tool_use and message " +
+      "ids were renumbered within this tape. Safe to attach to a bug report.",
     label: "redacted session",
     session: {
       id: tape.meta.sessionId ? placeholder("id", tape.meta.sessionId.length) : "",
@@ -87,7 +106,7 @@ export function redactTape(tape: Tape): TapeFile {
       versions: tape.meta.versions.map((v) => scrubName(v, "version")),
     },
     fields: TAPE_FIELDS,
-    steps: tape.steps.map(redactStep),
+    steps: tape.steps.map((s) => redactStep(s, book)),
   };
   if ("bodies" in file) delete (file as { bodies?: unknown }).bodies;
   return file;
@@ -105,7 +124,9 @@ export function auditRedacted(file: TapeFile): string[] {
   const placeholderRe = /^\[[a-z ]+ (empty|[\d,]+ chars)\]$/;
 
   /** Slots that may hold writer vocabulary verbatim. */
-  const NAME_SLOTS = /^(\.format|\.label|\.session\.versions\[\d+\]|\.steps\[\d+\]\.(y|n|d|r|k|u|m)|\.steps\[\d+\]\.z\[3\])$/;
+  const NAME_SLOTS = /^(\.format|\.label|\.session\.versions\[\d+\]|\.steps\[\d+\]\.(y|n|d|r|k)|\.steps\[\d+\]\.z\[3\])$/;
+  /** Renumbered correlation ids, which may only ever look like t7 or m12. */
+  const ID_SLOTS = /^\.steps\[\d+\]\.(u|m)$/;
   /** Slots that hold this file's own documentation, compared exactly. */
   const docs = new Map<string, string>([
     [".note", file.note ?? ""],
@@ -115,10 +136,12 @@ export function auditRedacted(file: TapeFile): string[] {
 
   const walk = (v: unknown, path: string): void => {
     if (typeof v === "string") {
+      if (v === "") return;                               // an absent field
       if (path.startsWith(".fields.")) return;            // the legend, written here
       if (docs.get(path) === v) return;
       if (placeholderRe.test(v)) return;
       if (ERROR_LABELS.has(v) && /\.w$/.test(path)) return;
+      if (ID_SLOTS.test(path)) { if (/^[tm]\d+$/.test(v)) return; bad.push(path); return; }
       if (NAME_SLOTS.test(path) && SAFE_NAME.test(v)) return;
       bad.push(path);
       return;
