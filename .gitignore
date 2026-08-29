@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+*.log
+.env*
+.DS_Store
+.claude/
+*.tsbuildinfo
+
+# Privacy: never commit a transcript, or anything derived from one.
+*.jsonl
+fixtures/real/
+*.tape.json
+!public/demo.tape.json
