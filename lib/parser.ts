@@ -69,9 +69,12 @@ function resultText(content: unknown): { text: string; chars: number; parts: { t
       chars += s.length;
       parts.push({ type: "text", chars: s.length });
     } else if (t === "image") {
-      // Never touch source.data: it is base64 and can be hundreds of KB.
+      // Never decode source.data — it is base64 and can be hundreds of KB —
+      // but do count it, or a result made entirely of images reads as empty.
       const src = isObj(b.source) ? b.source : {};
-      parts.push({ type: "image/" + (str(src.media_type) || "?"), chars: str(src.data).length });
+      const n = str(src.data).length;
+      chars += n;
+      parts.push({ type: "image/" + (str(src.media_type) || "?"), chars: n });
     } else {
       parts.push({ type: t || "?", chars: 0 });
     }

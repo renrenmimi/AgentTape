@@ -23,6 +23,7 @@ export type LoadProgress = {
 };
 
 const decoder = new TextDecoder("utf-8", { fatal: false });
+const EMPTY = new Uint8Array(0);
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length);
@@ -45,7 +46,7 @@ export async function loadJsonlBlob(
 ): Promise<Tape> {
   const ix = createIndexer(label);
   const total = blob.size;
-  let carry = new Uint8Array(0);
+  let carry: Uint8Array = new Uint8Array(0);
   let lineStart = 0; // absolute byte offset of the line currently being built
   let read = 0;
 
@@ -63,12 +64,18 @@ export async function loadJsonlBlob(
       const slice = buf.subarray(from, k);
       const bytes = carry.length ? concat(carry, slice) : slice;
       pushLine(ix, decoder.decode(bytes), lineStart, bytes.length);
-      carry = new Uint8Array(0);
+      carry = EMPTY;
       from = k + 1;
       lineStart = base + from;
     }
     const tail = buf.subarray(from);
-    if (tail.length) carry = carry.length ? concat(carry, tail) : tail.slice();
+    if (tail.length) {
+      // Copy rather than keep a view: `buf` is a whole megabyte and holding a
+      // view of it would pin the chunk until the next newline turns up.
+      const kept = new Uint8Array(tail.length);
+      kept.set(tail);
+      carry = carry.length ? concat(carry, kept) : kept;
+    }
 
     onProgress?.({ bytes: read, total, lines: ix.meta.lines, phase: "reading" });
   }
