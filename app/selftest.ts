@@ -88,6 +88,91 @@ export function armErrorTrap(): void {
 
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
 
+/** A shortcut, sent the way the page receives one: on the window. */
+const shortcut = (k: string, opts: KeyboardEventInit = {}) =>
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
+
+/**
+ * Click the control a person would click, found by what it says.
+ *
+ * It waits for the control first. A person does not click a button that is not
+ * there yet either — and the first version of this did, silently, because it
+ * returned false and the caller went on to wait four seconds for a consequence
+ * that was never coming.
+ */
+async function click(selector: string, says: RegExp, what: string): Promise<void> {
+  const find = () => [...document.querySelectorAll<HTMLElement>(selector)]
+    .find((e) => says.test((e.textContent ?? "").trim()));
+  if (!(await until(() => !!find(), 120))) throw new Error(`nothing on screen to ${what}`);
+  find()?.click();
+}
+
+/**
+ * Type into a control the way a keystroke does.
+ *
+ * Setting `.value` alone is invisible to React: it tracks the previous value on
+ * the node and suppresses the change when they match. Going through the native
+ * setter defeats that tracker, which is what a real keystroke does one
+ * character at a time.
+ */
+function typeInto(el: HTMLInputElement, value: string): void {
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  set?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Tick the checkbox for one tool, opening the menu first as a person would. */
+async function pickTool(name: string): Promise<void> {
+  const menu = document.querySelector<HTMLDetailsElement>("details.tool-menu");
+  if (!menu) throw new Error("no tool menu to pick a tool from");
+  menu.open = true;
+  if (!(await until(() => document.querySelectorAll(".tool-opt").length > 0, 60))) {
+    throw new Error("the tool menu opened with nothing in it");
+  }
+  const opt = [...document.querySelectorAll<HTMLElement>(".tool-opt")]
+    .find((l) => (l.querySelector(".tool-opt-name")?.textContent ?? "").trim() === name);
+  const box = opt?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (!box) throw new Error(`the tool menu has no entry for ${name}`);
+  box.click();
+  menu.open = false;
+}
+
+/**
+ * Send a key to the playhead, focusing it first, the way a person reaches it.
+ * Defined here rather than inside a block because several blocks need it and
+ * the alternative was each of them calling a setter instead.
+ */
+function trackKey(k: string, opts: KeyboardEventInit = {}): void {
+  const el = document.querySelector<HTMLElement>(".track-hit");
+  el?.focus();
+  el?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
+}
+
+/** Put the playhead at the start, by pressing Home on it. */
+const home = () => until(() => { trackKey("Home"); return api().pos === 0; }, 60);
+
+/**
+ * Put the playhead on a given step, by pressing Home and then walking right.
+ *
+ * There is no control that jumps to an arbitrary index — a person drags — so
+ * this is the keyboard route, which is a real one and is bounded: it is only
+ * used for positions inside the thirty-one step demo. The two places that need
+ * a position in a six-thousand step tape still set it directly, and say so.
+ */
+async function goTo(k: number): Promise<boolean> {
+  if (!(await home())) return false;
+  for (let i = 0; i < k; i++) {
+    const from = api().pos;
+    trackKey("ArrowRight");
+    await until(() => api().pos !== from, 20);
+  }
+  return api().pos === k;
+}
+
+/** How many steps the workbench believes it is showing, read off the slider. */
+const shownSteps = () =>
+  Number(document.querySelector(".track-hit")?.getAttribute("aria-valuemax") ?? 0);
+
 /** The demo tape's own length, so "is the demo loaded" is a fact, not a guess. */
 const DEMO_STEPS = 31;
 
@@ -290,7 +375,7 @@ export async function runSelfTest(): Promise<void> {
   }
 
   try {
-    await runBlocks(a, ok, skip);
+    await runBlocks(ok, skip);
   } catch (e) {
     // A throw used to end the run with no report at all: `runSelfTest` is
     // called as `void runSelfTest()`, so the rejection went nowhere and
@@ -325,8 +410,7 @@ export async function runSelfTest(): Promise<void> {
     // above noticing: every one of them reads the panel and trusts that it is
     // showing the step the playhead is on.
     const at = 7;
-    api().setPos(at);
-    await until(() => api().pos === at, 60);
+    await goTo(at);
     const heading = ([...document.querySelectorAll('section[aria-label="Step detail"] .pane-head h2')]
       .map((e) => (e.textContent ?? "").trim())[0] ?? "");
     const want = api().view?.steps[at];
@@ -364,11 +448,14 @@ export async function runSelfTest(): Promise<void> {
  * every time somebody adds a block would undo it.
  */
 async function need(block: string): Promise<void> {
-  const a = api();
-  a.setInside(-1);
-  a.setComparing(false);
-  a.setAsserting(false);
-  a.setKeysOpen(false);
+  // Overlays close the way they close for a person: Escape, which the page
+  // documents in its own shortcut sheet. Repeated because Escape closes one
+  // layer at a time, which is the behaviour rather than a limitation.
+  for (let i = 0; i < 6; i++) {
+    if (!document.querySelector(".nested-wb, .cmp, .sheet, .asserts")) break;
+    shortcut("Escape");
+    await until(() => !document.querySelector(".nested-wb, .cmp, .sheet, .asserts"), 20);
+  }
 
   const shut = () =>
     !document.querySelector(".nested-wb") &&
@@ -380,12 +467,20 @@ async function need(block: string): Promise<void> {
     throw new Error(`${block}: an overlay from the previous block would not close (${open.join(" ")})`);
   }
 
-  if (api().tape?.steps.length !== DEMO_STEPS) {
-    await api().onDemo();
-    if (!(await until(() => api().tape?.steps.length === DEMO_STEPS))) {
+  // The demo is loaded the way a person loads it: close what is open, then
+  // press the button on the empty state. There is no call into the page here
+  // and nothing captured — a block arrives at its starting state through the
+  // same path a user takes, which is why there is no leakage to defend against.
+  if (shownSteps() !== DEMO_STEPS) {
+    await click("header.strip button", /^close$/i, `${block}: leave the loaded run`);
+    if (!(await until(() => !!document.querySelector(".drop-card")))) {
+      throw new Error(`${block}: Close did not return to the empty state`);
+    }
+    await click(".drop-actions button", /load the demo tape/i, `${block}: load the demo tape`);
+    if (!(await until(() => shownSteps() === DEMO_STEPS))) {
       throw new Error(
-        `${block}: needs the demo tape (${DEMO_STEPS} steps) and found ` +
-        `${api().tape?.steps.length ?? 0} — a previous block left its own tape loaded`,
+        `${block}: needs the demo tape (${DEMO_STEPS} steps) and the workbench shows ` +
+        `${shownSteps()} — loading it through the interface did not take`,
       );
     }
   }
@@ -405,15 +500,20 @@ async function need(block: string): Promise<void> {
 }
 
 async function runBlocks(
-  a: Api,
   ok: (cond: boolean, label: string, note?: string) => void,
   skip: (label: string, why: string) => void,
 ): Promise<void> {
 
   // ---- load the demo ------------------------------------------------------
-  if (!a.tape) {
-    await a.onDemo();
-    await settle(6);
+  if (!api().tape) {
+    await click(".drop-actions button", /load the demo tape/i, "load the demo tape");
+    // Both, and this is the part that is easy to get wrong: the DOM commits
+    // before React flushes the passive effect that republishes the debug
+    // handle, and a double-rAF lands between the two. Waiting only for the
+    // slider gets a rendered workbench and a handle still holding the empty
+    // state. The rule is not "wait on the DOM" — it is "wait on whichever
+    // source of truth the next line reads", and here the next line reads both.
+    await until(() => shownSteps() > 0 && !!api().view);
   }
   const view = api().view;
   ok(!!view && view.steps.length > 0, "a tape is loaded", `${view?.steps.length ?? 0} steps`);
@@ -426,13 +526,21 @@ async function runBlocks(
   const n = view.steps.length;
 
   // ---- timeline ----------------------------------------------------------
-  const slider = document.querySelector<HTMLElement>(".track-hit");
-  ok(!!slider, "the timeline exposes a slider");
-  ok(slider?.getAttribute("role") === "slider", "the slider has role=slider");
+  /**
+   * The slider, looked up each time rather than held.
+   *
+   * Holding it was the same mistake as holding the api object: `need` returns
+   * to the empty state and loads the demo again, which remounts the workbench,
+   * and a node captured before that is detached and answers about a run that
+   * is no longer on screen.
+   */
+  const slider = () => document.querySelector<HTMLElement>(".track-hit");
+  ok(!!slider(), "the timeline exposes a slider");
+  ok(slider()?.getAttribute("role") === "slider", "the slider has role=slider");
   ok(
-    Number(slider?.getAttribute("aria-valuemax")) === n,
+    Number(slider()?.getAttribute("aria-valuemax")) === n,
     "slider range matches the parsed step count",
-    `aria-valuemax=${slider?.getAttribute("aria-valuemax")} steps=${n}`,
+    `aria-valuemax=${slider()?.getAttribute("aria-valuemax")} steps=${n}`,
   );
 
   // Count the ticks the canvas actually painted. Only meaningful while the
@@ -448,11 +556,11 @@ async function runBlocks(
 
   // ---- keyboard ----------------------------------------------------------
   const key = (k: string, opts: KeyboardEventInit = {}) => {
-    slider?.focus();
-    slider?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
+    slider()?.focus();
+    slider()?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
   };
 
-  api().setPos(0);
+  await home();
   await settle();
   key("ArrowRight");
   await settle();
@@ -499,8 +607,7 @@ async function runBlocks(
     ok(!!stat && /not in this file/.test(stat),
       "the header says work happened that this file does not contain", stat ?? "missing");
 
-    api().setPos(1);
-    await settle(4);
+    await goTo(1);
     ok(!!document.querySelector(".nested-absent"), "a delegated step shows the absent-work panel");
     const note = (document.querySelector(".nested-absent .nested-note")?.textContent ?? "").trim();
     ok(/not in this file/i.test(note), "…and says so in words", note.slice(0, 60));
@@ -512,12 +619,11 @@ async function runBlocks(
     ok(legend.some((t) => /delegated/.test(t)), "the timeline legend gains a delegation shape",
       legend.join(" | "));
 
-    api().setPos(0);
-    await settle(3);
+    await home();
     ok(!document.querySelector(".nested-absent"), "an ordinary step shows no delegation panel");
 
-    await a.onDemo();
-    await settle(6);
+    // Restoring is the next block's precondition, and it gets there by
+    // clicking rather than by calling anything.
   }
 
   // ---- a report you can paste ---------------------------------------------
@@ -556,7 +662,7 @@ async function runBlocks(
     ok(strip.some((t) => /assertion/i.test(t)),
       "the header reports whether the run holds its stated expectations", strip.join(" | "));
 
-    api().setAsserting(true);
+    shortcut("a");
     await until(() => !!document.querySelector(".asserts"));
     const panel = document.querySelector(".asserts");
     ok(!!panel, "the assertions panel opens");
@@ -571,6 +677,12 @@ async function runBlocks(
       "…and each says why");
 
     // A rule that must fail on the demo, with the offending step linked.
+    //
+    // Set rather than typed. The panel does let a person change a ceiling, but
+    // the assertion below counts *one* failing row, which means replacing the
+    // whole set — typing 1 into the existing ceiling leaves the other default
+    // rules in place and some of them fail on the demo too. Driving it would
+    // change what is being asserted, so it stays direct and says so.
     api().setRules([{ kind: "max-context", n: 1 }]);
     await settle(5);
     ok(document.querySelectorAll(".rule-fail").length === 1, "an impossible ceiling fails");
@@ -582,9 +694,11 @@ async function runBlocks(
     ok(!document.querySelector(".asserts"), "following the link closes the panel");
     ok(!!document.querySelector(".track-hit"), "…and lands back on the workbench");
 
-    api().setAsserting(true);
+    shortcut("a");
     await until(() => !!document.querySelector(".asserts"));
     // A rule that cannot be tested is not a pass.
+    // Not driveable at all: the tool pickers only offer tools that appear in
+    // the tape, and a vacuous rule is by definition about one that does not.
     api().setRules([{ kind: "before", first: "NoSuchTool", then: "AlsoMissing" }]);
     await settle(5);
     ok(api().assertions[0].vacuous === true, "a rule with nothing to check is marked vacuous");
@@ -641,8 +755,7 @@ async function runBlocks(
     for (let i = 0; i < 40 && api().delegations.length !== 1; i++) await settle(1);
     await settle(3);
 
-    api().setPos(1);
-    await settle(4);
+    await goTo(1);
     const enter = [...document.querySelectorAll(".nested button")]
       .find((b) => /step through/i.test(b.textContent ?? ""));
     ok(!enter, "an unloaded delegation offers no way in");
@@ -664,10 +777,10 @@ async function runBlocks(
     ok(!!wb?.querySelector(".detail"), "…and its own step detail");
     ok(!wb?.querySelector(".filters"), "…and none of the parent's filter bar");
 
-    const slider = wb?.querySelector<HTMLElement>(".track-hit");
-    const before = Number(slider?.getAttribute("aria-valuenow"));
-    slider?.focus();
-    slider?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    const nested = wb?.querySelector<HTMLElement>(".track-hit");
+    const before = Number(nested?.getAttribute("aria-valuenow"));
+    nested?.focus();
+    nested?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
     await settle(4);
     ok(Number(document.querySelector(".nested-wb .track-hit")?.getAttribute("aria-valuenow")) === before + 1,
       "its playhead moves with the arrow keys");
@@ -677,14 +790,14 @@ async function runBlocks(
     ok(!document.querySelector(".nested-wb"), "Escape leaves the delegated run");
     ok(!!document.querySelector(".track-hit"), "…and the parent is where it was");
 
-    await a.onDemo();
-    await settle(6);
+    // Restoring is the next block's precondition, and it gets there by
+    // clicking rather than by calling anything.
   }
 
   // ---- comparing two runs -------------------------------------------------
   {
     await need("comparing two runs");
-    api().setComparing(true);
+    shortcut("c");
     await until(() => !!document.querySelector(".cmp"));
     const panel = document.querySelector(".cmp");
     ok(!!panel, "the compare panel opens");
@@ -751,8 +864,7 @@ async function runBlocks(
   {
     await need("the array delta");
     const rows = () => [...document.querySelectorAll(".delta dt")].map((e) => (e.textContent ?? "").trim());
-    api().setPos(0);
-    await settle(3);
+    await home();
     ok(document.querySelector(".delta") !== null, "the step detail carries an array delta");
     ok(rows().join(",") === "appended,carried,context,array now",
       "the delta reads as a delta rather than a second messages panel", rows().join(","));
@@ -765,14 +877,12 @@ async function runBlocks(
     // of them must extend the entry rather than append a new one.
     let extended = "";
     for (let i = 1; i < Math.min(n, 40); i++) {
-      api().setPos(i);
-      await settle(2);
+      await goTo(i);
       const d = readDd();
       if (/a block to entry/.test(d[0])) { extended = d[0]; break; }
     }
     ok(extended !== "", "a step that extends an entry says so rather than claiming a new one", extended);
-    api().setPos(0);
-    await settle(2);
+    await home();
   }
 
   // ---- filtering ----------------------------------------------------------
@@ -787,8 +897,8 @@ async function runBlocks(
       "the search control states that it covers summaries, not full text",
       note?.textContent ?? "missing");
 
-    api().setFilter({ ...NO_FILTER, tools: [tools[0]] });
-    await settle(4);
+    await pickTool(tools[0]);
+    await until(() => api().matches !== n, 60);
     const m = api().matches;
     ok(m > 0 && m < n, "filtering to one tool matches some steps but not all", `${m} of ${n}`);
 
@@ -797,7 +907,7 @@ async function runBlocks(
 
     // Dimmed, not deleted: the rail must still carry every step, or the
     // timeline would lie about where the run spent its time.
-    ok(Number(slider?.getAttribute("aria-valuemax")) === n,
+    ok(Number(slider()?.getAttribute("aria-valuemax")) === n,
       "filtering does not change the number of steps on the track");
     const ticksAfter = countPaintedTicks(n);
     if (ticksBefore.usable && ticksAfter.usable) {
@@ -809,34 +919,33 @@ async function runBlocks(
     // The playhead is left alone when it stops matching.
     const stranded = [...api().mask].findIndex((v) => !v);
     if (stranded >= 0) {
-      api().setPos(stranded);
-      await settle(3);
+      await goTo(stranded);
       ok(api().pos === stranded, "a playhead that stops matching is not moved", `pos=${api().pos}`);
       const flag = document.querySelector(".filter-out");
       ok(!!flag && (flag.textContent ?? "").trim().length > 0,
         "…and it is marked out of filter in words", flag?.textContent ?? "missing");
 
       // n now means "next match", not "next failure".
-      api().seekNext(1);
+      trackKey("n");
       await settle(3);
       ok(api().mask[api().pos] === 1, "n steps to the next match while a filter is active",
         `pos=${api().pos}`);
     }
 
-    api().setFilter(NO_FILTER);
-    await settle(4);
+    await click(".filters button", /clear filter/i, "clear the filter");
+    await until(() => api().matches === n, 60);
     ok(api().matches === n || !document.querySelector(".filter-out"),
       "clearing the filter releases the playhead");
     ok(!document.querySelector(".filter-out"), "the out-of-filter marker is gone once cleared");
 
     // Search covers previews.
     const withPreview = view.steps.find((x) => x.tool === tools[0]);
-    api().setFilter({ ...NO_FILTER, query: tools[0].toLowerCase() });
-    await settle(4);
+    typeInto(document.querySelector<HTMLInputElement>("input.filter-input")!, tools[0].toLowerCase());
+    await until(() => api().matches !== n, 60);
     ok(api().matches > 0, "search matches a tool name", `${api().matches} for "${tools[0]}"`);
     ok(!!withPreview, "the searched tool exists in the view");
-    api().setFilter(NO_FILTER);
-    await settle(3);
+    await click(".filters button", /clear filter/i, "clear the filter");
+    await until(() => api().matches === n, 60);
   }
 
   // ---- the filter reaches past the timeline -------------------------------
@@ -845,8 +954,8 @@ async function runBlocks(
     const tools = [...new Set(view.steps.map((x) => x.tool).filter(Boolean))];
 
     // The messages panel marks matching entries rather than hiding them.
-    api().setFilter({ ...NO_FILTER, tools: [tools[0]] });
-    await settle(5);
+    await pickTool(tools[0]);
+    await until(() => api().matches !== n, 60);
     ok(document.querySelectorAll(".entry-hit").length > 0,
       "the messages panel marks entries that match");
     ok(document.querySelectorAll(".entry-match").length > 0, "…in words, not only by opacity");
@@ -857,17 +966,16 @@ async function runBlocks(
       "every rendered entry is marked one way or the other", String(shownEntries));
 
     // Where the playhead sits among the matches, so a silent n is legible.
-    api().setPos(0);
-    await settle(3);
+    await home();
     const posEl = () => (document.querySelector(".filter-pos")?.textContent ?? "").trim();
     ok(!!document.querySelector(".filter-pos"), "the filter bar reports the playhead's match position");
     for (let i = 0; i < 200 && !/· last$/.test(posEl()); i++) {
-      api().seekNext(1);
+      trackKey("n");
       await settle(1);
     }
     ok(/· last$/.test(posEl()), "…and says so when the playhead is on the last match", posEl());
     const before = api().pos;
-    api().seekNext(1);
+    trackKey("n");
     // Give it a chance to move before asserting that it did not. An assertion
     // about nothing happening that does not wait is an assertion that passes
     // because nothing has rendered yet.
@@ -877,8 +985,8 @@ async function runBlocks(
       ` · readout "${posEl()}"`);
     ok(/· last$/.test(posEl()), "…and the reason is still on screen", posEl());
 
-    api().setFilter(NO_FILTER);
-    await settle(3);
+    await click(".filters button", /clear filter/i, "clear the filter");
+    await until(() => api().matches === n, 60);
     ok(!document.querySelector(".filter-pos"), "the position readout goes away with the filter");
     ok(document.querySelectorAll(".entry-miss").length === 0, "…and so do the entry marks");
   }
@@ -889,12 +997,12 @@ async function runBlocks(
     const num = document.querySelector<HTMLInputElement>("input.filter-num");
     ok(!!num && num.type === "number", "the size threshold takes any number, not only presets");
     ok(!!num?.getAttribute("list"), "…while still offering common ones");
-    api().setFilter({ ...NO_FILTER, minChars: 1234 });
-    await settle(4);
+    typeInto(document.querySelector<HTMLInputElement>("input.filter-num")!, "1234");
+    await until(() => api().filter.minChars === 1234, 60);
     ok(document.querySelector<HTMLInputElement>("input.filter-num")?.value === "1234",
       "…and a number outside the presets is accepted");
-    api().setFilter(NO_FILTER);
-    await settle(3);
+    await click(".filters button", /clear filter/i, "clear the filter");
+    await until(() => api().matches === n, 60);
 
     const menu = document.querySelector<HTMLDetailsElement>(".tool-menu");
     if (menu) {
@@ -928,8 +1036,7 @@ async function runBlocks(
 
   // ---- colour is never the only signal ------------------------------------
   if (firstFail >= 0) {
-    api().setPos(firstFail);
-    await settle();
+    await goTo(firstFail);
     const flag = document.querySelector(".d-flag");
     ok(!!flag && (flag.textContent ?? "").trim().length > 0,
       "a failed step states its failure in words in the detail panel",
@@ -1194,6 +1301,10 @@ async function runBlocks(
   await settle(2);
   const big = api().view;
   ok(!!big && big.steps.length === BIG, "the synthetic tape loaded", `${big?.steps.length ?? 0} steps`);
+  // The one position that is not reachable by keyboard in reasonable time:
+  // six thousand ArrowRights. End would do it, but this block is about the
+  // messages panel at the far end of a large tape rather than about the
+  // playhead, so it is set directly and said out loud.
   api().setPos(BIG - 1);
   for (let i = 0; i < 60 && api().pos !== BIG - 1; i++) await settle(1);
   await settle(2);
