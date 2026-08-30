@@ -1,15 +1,29 @@
 name: ci
+
+# What runs here: the static checker and a production build.
+#
+# What does NOT run here: the in-page suite at ?selftest=1. It asserts against
+# a live DOM — that the timeline painted one tick per step, that the messages
+# panel stays virtualised, that failure is stated in words as well as colour —
+# so it needs a browser driving a running server, which is a different and much
+# heavier job than this one. It is run by hand before every merge and each pull
+# request says so. Do not read a green tick here as covering it.
+
 on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
+          # verify.mjs imports the parser and the redactor as TypeScript
+          # modules directly, which relies on the type stripping that became
+          # unflagged in Node 22.18.
           node-version: 22
           cache: npm
       - run: npm ci
