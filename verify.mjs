@@ -21,6 +21,10 @@ import { tapeFromFile, serializeTape, TAPE_FORMAT } from "./lib/tape.ts";
 import { summarise, traceJump } from "./lib/summary.ts";
 import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek } from "./lib/filter.ts";
 import { cumulativeChars, deltaAt } from "./lib/delta.ts";
+import {
+  DELEGATION_TOOLS, agentIdFromName, delegationSummary, findDelegations,
+  isDelegation, pairBySidecar, pairByTime, summariseRun,
+} from "./lib/subagents.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -445,6 +449,110 @@ section("filtering");
   ok(seek(mask, first, -1) === -1, "seek back stops at the start");
 }
 
+// ---------------------------------------------------------------- subagents
+
+section("delegated work");
+{
+  ok(DELEGATION_TOOLS.has("Agent"), "Agent is recognised as a delegation");
+  ok(!DELEGATION_TOOLS.has("TaskCreate") && !DELEGATION_TOOLS.has("TaskUpdate"),
+    "the task-list tools are not mistaken for delegation");
+
+  ok(agentIdFromName("agent-a2cc28d63813de803.jsonl") === "a2cc28d63813de803",
+    "an agent id is read off its filename");
+  ok(agentIdFromName("/some/where/agent-b1.jsonl") === "b1", "…including from a path");
+  ok(agentIdFromName("session.jsonl") === "", "a main transcript is not an agent file");
+  ok(agentIdFromName("agent-x.meta.json") === "", "a sidecar is not an agent file");
+  ok(agentIdFromName("agent-../escape.jsonl") === "", "a traversal is not an agent id");
+
+  // A main transcript with two delegations, one of which never came back.
+  const at = (n) => new Date(Date.parse("2026-03-03T10:00:00Z") + n * 1000).toISOString();
+  const call = (uuid, id, ts) => JSON.stringify({
+    type: "assistant", sessionId: "d", uuid, timestamp: ts, isSidechain: false,
+    message: { role: "assistant", id: "m" + uuid, model: "claude-opus-5",
+      content: [{ type: "tool_use", id, name: "Agent", input: { a: 1 } }] },
+  });
+  const result = (uuid, id, ts) => JSON.stringify({
+    type: "user", sessionId: "d", uuid, timestamp: ts,
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "summary" }] },
+  });
+  const main = loadJsonlString([
+    JSON.stringify({ type: "user", sessionId: "d", uuid: "u0", timestamp: at(0),
+      message: { role: "user", content: [{ type: "text", text: "go" }] } }),
+    call("c1", "toolu_one", at(10)),
+    result("r1", "toolu_one", at(60)),
+    call("c2", "toolu_two", at(70)),
+    result("r2", "toolu_two", at(120)),
+    call("c3", "toolu_three", at(130)),          // never comes back
+  ].join("\n"), "main");
+
+  const mainPairs = pairTools(main.steps);
+  const dels = findDelegations(main.steps, mainPairs);
+  ok(dels.length === 3, "every Agent call is found", String(dels.length));
+  ok(dels.every((d) => isDelegation(main.steps[d.step])), "…and each is a delegation step");
+  ok(dels[0].result > dels[0].step, "a delegation knows its result step");
+  ok(dels[2].result === -1, "a delegation with no result says so");
+  ok(dels[2].to === Infinity, "…and leaves its window open");
+  ok(dels[0].to > dels[0].from, "a closed window runs forwards");
+
+  ok(pairBySidecar(dels, "toolu_two") === 1, "a sidecar id picks its delegation exactly");
+  ok(pairBySidecar(dels, "toolu_nope") === -1, "an unknown sidecar id matches nothing");
+
+  const t = (n) => Date.parse(at(n));
+  ok(pairByTime(dels, t(30)) === 0, "a start time inside the first window pairs with it");
+  ok(pairByTime(dels, t(90)) === 1, "…and inside the second, with that one");
+  ok(pairByTime(dels, t(200)) === 2, "a time after an open-ended call pairs with it");
+  ok(pairByTime(dels, t(-100)) === -1, "a time before every window pairs with nothing");
+  // A gap between two windows is genuinely unknown, and must stay unknown.
+  ok(pairByTime(dels, t(65)) === -1, "a time in the gap between two windows pairs with nothing");
+  ok(pairByTime(dels, t(61)) === 0,
+    "a time just past a window still pairs, inside the two-second slack", String(pairByTime(dels, t(61))));
+
+  // Ambiguity must refuse rather than guess: two windows open at once.
+  const overlapping = findDelegations(loadJsonlString([
+    call("a", "toolu_a", at(10)),
+    call("b", "toolu_b", at(11)),
+    result("ra", "toolu_a", at(90)),
+    result("rb", "toolu_b", at(91)),
+  ].join("\n"), "over").steps, new Map());
+  ok(overlapping.length === 2, "two parallel delegations are both found");
+  ok(pairByTime(overlapping, t(50)) === -1,
+    "a time inside two open windows refuses to pick one");
+
+  // summariseRun over an indexed subagent transcript
+  const subLines = [];
+  for (let i = 0; i < 6; i++) {
+    subLines.push(i % 2 === 0
+      ? JSON.stringify({ type: "assistant", sessionId: "s", agentId: "z1", uuid: "z" + i,
+          timestamp: at(20 + i), isSidechain: true,
+          message: { role: "assistant", id: "sm" + i, model: "claude-opus-5",
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 },
+            content: [{ type: "tool_use", id: "st" + i, name: i === 0 ? "Bash" : "Read", input: { a: i } }] } })
+      : JSON.stringify({ type: "user", sessionId: "s", agentId: "z1", uuid: "z" + i,
+          timestamp: at(20 + i), isSidechain: true,
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "st" + (i - 1),
+            is_error: i === 1, content: "out" }] } }));
+  }
+  const sub = loadJsonlString(subLines.join("\n"), "sub");
+  const run = summariseRun(sub, "z1", "time");
+  ok(run.agentId === "z1" && run.pairedBy === "time", "a run carries its id and how it was matched");
+  ok(run.toolCalls === 3, "a run counts its tool calls", String(run.toolCalls));
+  ok(run.errors === 1, "…and its failures", String(run.errors));
+  ok(run.tools[0].name === "Read" && run.tools[0].count === 2, "tools are ordered by call count",
+    JSON.stringify(run.tools));
+  ok(run.output === 15 && run.cacheRead === 300, "tokens are summed across the run",
+    `${run.output} out, ${run.cacheRead} cached`);
+  ok(run.lastT > run.firstT, "a run has a duration");
+  ok(sub.steps.every((x) => x.rawType === "assistant" || x.rawType === "user"),
+    "a subagent transcript parses with the same reader as a main one");
+
+  const withRun = dels.map((d, i) => (i === 0 ? { ...d, run } : d));
+  const sum = delegationSummary(withRun);
+  ok(sum.total === 3 && sum.loaded === 1, "the summary counts total and loaded separately");
+  ok(sum.toolCalls === 3, "…and adds up the work that was invisible", String(sum.toolCalls));
+  ok(delegationSummary(dels).loaded === 0 && delegationSummary(dels).total === 3,
+    "with nothing loaded it still reports that work exists elsewhere");
+}
+
 // ---------------------------------------------------------------- jump trace
 
 section("context jump attribution");
@@ -676,6 +784,20 @@ ok(!helperCode.includes("0.0.0.0"), "the helper never binds to 0.0.0.0");
 ok(/realpath/i.test(helperCode), "the helper resolves symlinks before checking the path");
 ok(helperCode.includes("PROJECTS"), "the helper confines itself to the projects directory");
 ok(!/customTitle|aiTitle|lastPrompt/.test(helperCode), "the helper never reads a session title");
+
+// A subagent sidecar carries a `description` written from the prompt that
+// spawned it. It is prose about the user's work, in the same class as a session
+// title, and must never be read or sent.
+ok(!/\bdescription\b/.test(helperCode), "the helper never reads a subagent description");
+ok(/toolUseId/.test(helperCode), "…but it does read the id that links a run to its call");
+// One resolver, still. /subagent must go through the same function as /file.
+const resolverDefs = (helperCode.match(/function resolveTranscript/g) ?? []).length;
+ok(resolverDefs === 1, "there is exactly one path resolver", String(resolverDefs));
+ok(/subagents/.test(helperCode) && /resolveTranscript\(\s*$|resolveTranscript\(/.test(helperCode),
+  "subagent paths are built inside that resolver");
+const appSrc = read("app/page.tsx") + read("app/empty-state.tsx");
+ok(!/meta\.description|\.description\b/.test(appSrc),
+  "the page never reads a subagent description either");
 
 // The helper used to resolve ../out and tell the user to "build to ./out".
 // Nothing in this repository writes an out/ directory — `next build` writes

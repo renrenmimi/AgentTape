@@ -15,6 +15,8 @@ import { useTheme } from "./theme-provider";
 type Props = {
   tape: Tape;
   summary: Summary;
+  /** Delegated runs: how many, and how many have been loaded. */
+  delegations: { total: number; loaded: number; steps: number; toolCalls: number };
   onExport: () => void;
   onClose: () => void;
   exporting: boolean;
@@ -32,7 +34,7 @@ function Stat({ k, v, sub, risk }: { k: string; v: string; sub?: string; risk?: 
   );
 }
 
-export default function SummaryStrip({ tape, summary, onExport, onClose, exporting }: Props) {
+export default function SummaryStrip({ tape, summary, delegations, onExport, onClose, exporting }: Props) {
   const { theme, toggleTheme } = useTheme();
   const s = summary;
 
@@ -54,6 +56,28 @@ export default function SummaryStrip({ tape, summary, onExport, onClose, exporti
       <Stat k="active" v={fmtDuration(s.activeMs)} sub={s.idleGaps ? `${s.idleGaps} gaps` : undefined} />
       <Stat k="tool calls" v={fmtInt(s.toolCalls)} />
       <Stat k="errors" v={fmtInt(s.errors)} risk={s.errors > 0} />
+      {delegations.total > 0 && (
+        <div className={"stat" + (delegations.loaded < delegations.total ? " stat-warn" : "")}>
+          <span className="eyebrow stat-k">delegated</span>
+          <span
+            className="stat-v"
+            title={
+              delegations.loaded < delegations.total
+                ? "This transcript records the calls but not the work. Open a delegated step to load it."
+                : `${fmtInt(delegations.steps)} steps and ${fmtInt(delegations.toolCalls)} tool calls loaded from beside this session`
+            }
+          >
+            {fmtInt(delegations.total)}
+            <small>
+              {delegations.loaded === 0
+                ? "runs not in this file"
+                : delegations.loaded < delegations.total
+                  ? `· ${fmtInt(delegations.loaded)} loaded`
+                  : `· +${fmtInt(delegations.toolCalls)} tool calls`}
+            </small>
+          </span>
+        </div>
+      )}
       <Stat
         k="tokens in"
         v={fmtTokens(s.input + s.cacheRead + s.cacheCreate)}

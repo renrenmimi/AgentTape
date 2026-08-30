@@ -19,13 +19,16 @@
 //   * bind anywhere but 127.0.0.1
 //   * serve a path that does not resolve inside ~/.claude/projects
 //   * read, print or transmit a session title — titles are derived from user
-//     prompts, so they leak the content this whole project exists to protect
+//     prompts, so they leak the content this whole project exists to protect.
+//     The same rule covers a subagent's `description`: it is written from the
+//     prompt that spawned it, so the sidecar is read for its ids and never for
+//     that field
 //   * write anything, anywhere
 //
 // No dependencies. Node 18 or newer.
 
 import { createReadStream } from "node:fs";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
@@ -115,6 +118,7 @@ async function listSessions({ deep }) {
         mtime: st.mtimeMs,
         lines: 0,
         tools: 0,
+        agents: [],
       });
     }
   }
@@ -125,8 +129,46 @@ async function listSessions({ deep }) {
     const counted = await scanFile(join(PROJECTS, s.project, s.session + ".jsonl"));
     s.lines = counted.lines;
     s.tools = counted.tools;
+    s.agents = await listAgents(s.project, s.session);
   }
   return { sessions: head, total: found.length };
+}
+
+/**
+ * The subagent files beside a session, with the id of the call each belongs to.
+ *
+ * That id comes from the `.meta.json` sidecar, which is the only place the link
+ * exists — nothing inside a subagent transcript points back at its parent. The
+ * sidecar also carries a `description` written from the prompt that spawned the
+ * agent; it is prose about the user's work, so it is never read here and never
+ * sent. Only the ids and the agent type leave this function.
+ */
+async function listAgents(project, session) {
+  const dir = join(PROJECTS, project, session, "subagents");
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.endsWith(".jsonl")) continue;
+    const id = e.name.slice("agent-".length, -".jsonl".length);
+    if (!e.name.startsWith("agent-") || !SAFE_SEGMENT.test(id)) continue;
+    const st = await stat(join(dir, e.name)).catch(() => null);
+    const rec = { id, bytes: st ? st.size : 0, toolUseId: "", agentType: "" };
+    try {
+      const meta = JSON.parse(await readFile(join(dir, `agent-${id}.meta.json`), "utf8"));
+      // Two fields, deliberately. `description` is not one of them.
+      if (typeof meta.toolUseId === "string") rec.toolUseId = meta.toolUseId;
+      if (typeof meta.agentType === "string") rec.agentType = meta.agentType;
+    } catch {
+      /* no sidecar: the page falls back to pairing by time */
+    }
+    out.push(rec);
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // ---------------------------------------------------------------- printing
@@ -162,9 +204,9 @@ function printList({ sessions, total, error }) {
   console.log("");
   console.log(
     "  " + pad("#", 4) + pad("project", w + 2) + pad("session", 10) +
-    padS("size", 9) + padS("lines", 8) + padS("tools", 7) + "  modified",
+    padS("size", 9) + padS("lines", 8) + padS("tools", 7) + padS("agents", 8) + "  modified",
   );
-  console.log("  " + "─".repeat(w + 2 + 10 + 9 + 8 + 7 + 12));
+  console.log("  " + "─".repeat(w + 2 + 10 + 9 + 8 + 7 + 8 + 12));
   sessions.forEach((s, i) => {
     console.log(
       "  " + pad(i + 1, 4) +
@@ -173,6 +215,7 @@ function printList({ sessions, total, error }) {
       padS(fmtBytes(s.bytes), 9) +
       padS(s.lines.toLocaleString("en-US"), 8) +
       padS(s.tools.toLocaleString("en-US"), 7) +
+      padS(s.agents.length ? String(s.agents.length) : "—", 8) +
       "  " + fmtAgo(s.mtime),
     );
   });
@@ -180,6 +223,7 @@ function printList({ sessions, total, error }) {
     console.log(`\n  ${sessions.length} of ${total} sessions shown — pass --all for the rest.`);
   }
   console.log("\n  Titles are not read and not shown: they are generated from your prompts.");
+  console.log("  \"agents\" counts the subagent transcripts beside each session.");
 }
 
 // ---------------------------------------------------------------- serving
@@ -190,21 +234,30 @@ function printList({ sessions, total, error }) {
  * symlink cannot point out of the tree, and the resolved path is re-checked
  * against the realpath'd root with a separator so /projects-evil cannot pass
  * as /projects.
+ *
+ * Subagent transcripts go through this same function rather than a second one.
+ * They sit two directories deeper, so `agent` is one more segment held to the
+ * same rule, and everything after the join is unchanged. A second resolver
+ * would be a second place to get this wrong.
  */
-async function resolveTranscript(project, session) {
+async function resolveTranscript(project, session, agent = "") {
   if (!project || !session) return { error: "project and session are both required" };
   if (!SAFE_SEGMENT.test(project) || !SAFE_SEGMENT.test(session))
     return { error: "project and session must be plain path segments" };
-  if (project.includes("..") || session.includes("..") ||
-      project === "." || session === ".")
+  if (agent && !SAFE_SEGMENT.test(agent))
+    return { error: "agent must be a plain path segment" };
+  if (project.includes("..") || session.includes("..") || agent.includes("..") ||
+      project === "." || session === "." || agent === ".")
     return { error: "no traversal" };
 
   const root = await realpath(PROJECTS).catch(() => null);
   if (!root) return { error: "no projects directory" };
 
-  const candidate = resolve(root, project, session + ".jsonl");
+  const candidate = agent
+    ? resolve(root, project, session, "subagents", `agent-${agent}.jsonl`)
+    : resolve(root, project, session + ".jsonl");
   const real = await realpath(candidate).catch(() => null);
-  if (!real) return { error: "no such session" };
+  if (!real) return { error: agent ? "no such subagent" : "no such session" };
   if (real !== candidate) return { error: "refusing to follow a symlink out of the tree" };
   if (!real.startsWith(root + sep)) return { error: "outside ~/.claude/projects" };
   if (extname(real) !== ".jsonl") return { error: "not a transcript" };
@@ -271,10 +324,17 @@ function serve(initial) {
       return;
     }
 
-    if (url.pathname === "/file") {
+    // One handler, one resolver. /subagent differs from /file by a segment.
+    if (url.pathname === "/file" || url.pathname === "/subagent") {
+      const agent = url.pathname === "/subagent" ? url.searchParams.get("agent") : "";
+      if (url.pathname === "/subagent" && !agent) {
+        json(res, 400, { error: "agent is required" });
+        return;
+      }
       const found = await resolveTranscript(
         url.searchParams.get("project"),
         url.searchParams.get("session"),
+        agent ?? "",
       );
       if (found.error) { json(res, 400, { error: found.error }); return; }
       res.writeHead(200, {
@@ -292,9 +352,10 @@ function serve(initial) {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end(
       "AgentTape helper.\n\n" +
-      "  GET /sessions                  the session index\n" +
-      "  GET /file?project=&session=    one transcript, read-only\n" +
-      "  GET /health                    liveness\n\n" +
+      "  GET /sessions                          the session index\n" +
+      "  GET /file?project=&session=            one transcript, read-only\n" +
+      "  GET /subagent?project=&session=&agent=  one subagent transcript\n" +
+      "  GET /health                            liveness\n\n" +
       "This is not the app. Run `npm run dev` in another terminal and open\n" +
       "http://localhost:3000 — the page will find this helper on its own.\n",
     );

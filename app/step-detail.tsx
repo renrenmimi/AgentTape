@@ -13,6 +13,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BODY_WINDOW, INLINE_BODY_LIMIT, type Step, type StepBody, type Tape } from "@/lib/format";
 import { fmtBytes, fmtClock, fmtDate, fmtDuration, fmtInt, fmtTokens } from "@/lib/summary";
 import { cumulativeChars, deltaAt } from "@/lib/delta";
+import type { Delegation } from "@/lib/subagents";
+import NestedRun from "./nested-run";
 import { KIND_LABEL } from "./glyphs";
 
 const HUGE = 262144; // above this, offer a download rather than a reveal
@@ -30,6 +32,14 @@ type Props = {
   onSelectStep: (globalIndex: number) => void;
   /** What to call a step on screen — its position in the visible view. */
   shownIndex: (globalIndex: number) => number;
+  /** Set when this step handed its work to a subagent. */
+  delegation: Delegation | null;
+  onLoadSubagent: (() => void) | null;
+  subLoading: boolean;
+  subError: string;
+  offeredBytes: number;
+  /** True when the playhead is on a step the active filter excludes. */
+  outOfFilter: boolean;
 };
 
 /** Signed, so a context drop across a compaction reads as a drop. */
@@ -131,7 +141,10 @@ function BodyView({ body, title, step }: { body: StepBody | null; title: string;
   );
 }
 
-export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIndex }: Props) {
+export default function StepDetail({
+  tape, curStep, pairs, onSelectStep, shownIndex,
+  delegation, onLoadSubagent, subLoading, subError, offeredBytes, outOfFilter,
+}: Props) {
   const steps = tape.steps;
   const step = steps[curStep];
   const cum = useMemo(() => cumulativeChars(steps), [steps]);
@@ -194,6 +207,8 @@ export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIn
             <span className="d-kind">{KIND_LABEL[step.kind]}</span>
             {step.tool && <b>{step.tool}</b>}
             {step.err && <span className="d-flag">{step.errWhy || "failed"}</span>}
+            {delegation && <span className="d-kind d-kind-accent">delegated</span>}
+            {outOfFilter && <span className="d-out">out of filter</span>}
           </div>
 
           <div className="d-row">
@@ -267,6 +282,16 @@ export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIn
                 )}
               </span>
             </div>
+          )}
+
+          {delegation && (
+            <NestedRun
+              delegation={delegation}
+              onLoad={onLoadSubagent}
+              loading={subLoading}
+              error={subError}
+              offeredBytes={offeredBytes}
+            />
           )}
 
           {delta && (

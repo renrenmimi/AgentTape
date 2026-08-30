@@ -33,6 +33,8 @@ type Props = {
   onPos: (n: number) => void;
   /** One byte per step: 0 is dimmed by the active filter. null means no filter. */
   mask?: Uint8Array | null;
+  /** One byte per step: 1 handed its work to a subagent. */
+  delegated?: Uint8Array | null;
   /** n and p. The page decides whether they mean failures or matches. */
   onSeek?: (dir: 1 | -1) => void;
   height?: number;
@@ -139,7 +141,7 @@ function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: numb
   }
 }
 
-export default function Timeline({ steps, pos, onPos, mask = null, onSeek, height = 84 }: Props) {
+export default function Timeline({ steps, pos, onPos, mask = null, delegated = null, onSeek, height = 84 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const head = useRef<HTMLCanvasElement>(null);
@@ -190,7 +192,8 @@ export default function Timeline({ steps, pos, onPos, mask = null, onSeek, heigh
     const risk = cssVar("--risk") || "#e47777";
     const grid = cssVar("--grid") || "rgba(255,255,255,.07)";
     const dim = cssVar("--text-3") || "#788292";
-    const idle = cssVar("--idle") || "rgba(255,255,255,.14)";
+    const idle = cssVar("--idle") || "rgba(255,255,255,.055)";
+    const accent = cssVar("--accent") || "#8a7cf6";
 
     // rail baselines
     g.strokeStyle = grid;
@@ -330,6 +333,27 @@ export default function Timeline({ steps, pos, onPos, mask = null, onSeek, heigh
         g.fillRect(PAD + c - 1, RAIL_Y - 8, 2, 16);
       }
     }
+    // Delegations, over everything else. A handful per session, and each one
+    // stands for a whole run this file does not contain — the stem is there to
+    // say the work went somewhere.
+    if (delegated) {
+      g.strokeStyle = accent;
+      g.fillStyle = accent;
+      g.lineWidth = 1.3;
+      for (let i = 0; i < n; i++) {
+        if (!delegated[i]) continue;
+        g.globalAlpha = mask && !mask[i] ? 0.28 : 1;
+        const x = Math.round(xOf(i, w)) + 0.5;
+        g.beginPath();
+        g.moveTo(x, RAIL_Y - 9);
+        g.lineTo(x, RAIL_Y - 4);
+        g.stroke();
+        g.beginPath();
+        g.arc(x, RAIL_Y - 10.5, 1.7, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+
     g.globalAlpha = 1;
     g.lineWidth = 1.25;
 
@@ -372,7 +396,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, onSeek, heigh
         }
       }
     }
-  }, [n, steps, tx, xOf, firstT, lastT, mask]);
+  }, [n, steps, tx, xOf, firstT, lastT, mask, delegated]);
 
   // ---- playhead layer -----------------------------------------------------
 
