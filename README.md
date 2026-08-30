@@ -146,19 +146,47 @@ invisible. Delegated steps now have their own shape on the rail, the header
 counts them, and the step says in words that the work exists and is not here.
 Drop the `agent-*.jsonl` files alongside the transcript, or open the session
 through the helper, and each delegated run appears nested inside the step that
-started it — its own strip, its step count, its tools and what it cost.
+started it. Step into one and you get the workbench again pointed at the
+subagent's own tape — its timeline, its messages, its bodies. One delegated run
+in the corpus this was built against makes 130 tool calls; that is a session,
+not a footnote.
+
+Drops are taken at any time, not only from the empty state. A subagent file
+pairs into the run on screen; a transcript asks whether to open it or compare
+with it.
 
 **Comparing two runs.** Load a second tape and find where the two stopped
 agreeing. Alignment is by tool-call sequence and the rule is printed above the
 result; the divergence is marked on both rails, which share one scale so a
 shorter run stops short instead of being stretched to match.
 
-**Assertions.** State what a run was supposed to do — `Grep happens before
-Write`, `context never exceeds 200,000 tokens`, `no tool is called more than
-five times in a row`, `no tool call takes longer than 120 seconds`, `the run
-ends without an error` — and the panel reports each one with the offending step
-linked. Every rule reads the index and none reads a body, so a redacted tape
-can be asserted against exactly as well as the transcript it came from.
+**Assertions, in the app and in CI.** State what a run was supposed to do —
+`Grep happens before Write`, `context never exceeds 200,000 tokens`, `no tool is
+called more than five times in a row`, `no tool call takes longer than 120
+seconds`, `the run ends without an error` — and the panel reports each one with
+the offending step linked.
+
+Save the set and it leaves the browser:
+
+```bash
+node bin/agenttape.mjs check expectations.rules.json session.jsonl
+```
+
+One line per rule, and **exit 1 when any of them failed** — which is what puts
+it in a CI job and tells you the day your agent stopped searching before it
+wrote. The file format is documented in [`docs/rules.md`](docs/rules.md). This
+repository runs the checker against itself on every push, against two invented
+runs committed under `fixtures/`, one that meets the expectations and one that
+breaks all five.
+
+Every rule reads the index and none reads a body, so a redacted tape can be
+asserted against exactly as well as the transcript it came from.
+
+**A report you can paste.** One button produces Markdown: the counts, the tool
+breakdown, every failure with its step number, the context profile as a
+sparkline, the compactions, the delegated runs and any assertion that did not
+hold. Structure and numbers only — no message text — so it is safe to paste into
+an issue by construction rather than by care.
 
 **Tool call detail** — the input, the matched result, whether it errored, and
 the wall-clock time between the two.
@@ -173,8 +201,18 @@ most need to see.
 
 **A session summary** — steps, turns, wall-clock and active duration, tool
 calls by name, errors, tokens in and out, peak context, models used. Wall-clock
-and active sit side by side deliberately: real sessions get resumed over days,
-so a run can span 213 hours of wall-clock and contain five hours of work.
+and active sit side by side deliberately: real sessions get resumed over days.
+Across the forty sessions on the machine this was built on, 99% of elapsed time
+inside a session is idle.
+
+**Every session at once.** With the helper running, a sortable table of all of
+them — steps, tool calls, errors, wall and active time, peak context, whether
+they compacted, whether they delegated — with a context sparkline per row on one
+shared scale, so the session that went badly is visible without opening
+anything. Click through to open one.
+
+There is no title column and no first message. Both are written from prompts. A
+session there is a project directory, an id and a clock.
 
 ## Redaction
 
@@ -216,8 +254,14 @@ covers every documented record type, unknown types degrading to a generic step,
 missing `usage`, malformed JSON mid-file, byte offsets across multi-byte
 characters, filtering in each dimension and in combination, the step delta, the
 context-jump trace, delegation detection and subagent pairing, run comparison
-including its degenerate cases, every assertion rule in both directions, and the
-twelve-character redaction test. It also asserts the
+including its degenerate cases, every assertion rule in both directions, rule-set
+parsing and its seven distinct failures, and the twelve-character redaction test.
+
+Three of its checks are behavioural privacy tests built the same way: take a
+transcript in which every text field is one distinctive marker, produce the
+artefact from it — the statistics record, the pasteable report, a redacted tape
+— and assert the marker does not come out, *and* that the marker really was in
+the index it was built from, so the test cannot pass vacuously. It also asserts the
 repository's own guarantees: the ignore rules, the absence of any remote host,
 that nothing lands on `window` outside the self-test flag, that the search path
 never reaches for a body, and that the helper only points at directories this
@@ -233,8 +277,12 @@ messages panel stays virtualised on a six-thousand-step tape, failure is stated
 in words as well as in colour, every control is keyboard-reachable and named,
 and the stylesheet honours `prefers-reduced-motion`.
 
-**CI runs `verify.mjs` and a production build. It does not run the in-page
-suite** — that needs a browser driving a running server. A green tick on a pull
+CI also runs the rule checker against two committed fixture tapes, one that
+meets its expectations and one that breaks all five, so the non-zero exit is
+demonstrated rather than described.
+
+**CI runs `verify.mjs`, a production build and the rule checker. It does not run
+the in-page suite** — that needs a browser driving a running server. A green tick on a pull
 request does not cover it, which is why the workflow file says so and why every
 pull request records having run it by hand.
 
@@ -295,8 +343,11 @@ A consequence worth knowing: no assistant record in any fixture mixed prose with
 a tool call, and none held two `tool_use` blocks. Parallel tool calls appear as
 consecutive lines sharing one `message.id`.
 
-See `docs/format-notes.md` for the rest of what the format actually looks like,
-including the parts of it that are version-dependent.
+[`docs/format-notes.md`](docs/format-notes.md) is the full reference — record
+types, `usage`, the four signals that mean a step failed, how subagents link
+back to their parent, and which fields are version-dependent. Nobody appears to
+have written the format down publicly, so it is written for a stranger rather
+than for me.
 
 ## Limits
 
@@ -312,11 +363,17 @@ whole design avoids. The control says so on its face rather than in this file.
 **Comparison aligns by tool-call sequence, and positionally.** Two runs are
 reduced to the tools they called and those lists are compared; message text is
 never read, because two runs of the same task differ in almost every word and a
-textual comparison would answer "step 2" every time. The cost is that one extra
-call early in a run shifts everything after it. The panel detects the common
-shapes — a swapped call, an insertion of one or two — and says which it found,
-but past about eight calls of drift it stops trying and tells you so. Only the
-first divergence is reported; there may be later ones.
+textual comparison would answer "step 2" every time.
+
+Its blind spot follows from the rule. Two runs that call exactly the same tools
+in exactly the same order are *identical* to it, however differently they went —
+a run that read the wrong file and a run that read the right one look the same,
+because both called `Read`. It can tell you where two runs stopped agreeing
+about *what to do*; it cannot tell you which of them did it better. Positional
+alignment costs the rest: one extra call early shifts everything after it. The
+panel detects the common shapes — a swapped call, an insertion of one or two —
+and says which it found, but past about eight calls of drift it stops trying and
+says so. Only the first divergence is reported; there may be later ones.
 
 **A nested subagent run shows less than a top-level one.** You get its shape,
 its step count, its tools, its failures, its tokens and its wall clock. You do
@@ -358,6 +415,36 @@ counts and error flags. There is no rule that can be about what was *said*,
 because nothing in the checker may read a body. "Did it search before writing"
 is answerable; "did it explain itself" is not.
 
+**A nested run is not the whole workbench.** Stepping into a delegated run gives
+you its timeline, its messages and its bodies. It does not give you the filter,
+the comparison, the assertions or the redaction export — those belong to the run
+you opened — and it does not descend into runs that run delegated in turn.
+
+**Cross-session statistics come from the helper.** The table of every session is
+built by the local helper walking `~/.claude/projects`, so it exists only when
+you are running locally with the helper started. A deployed build has no such
+thing and cannot: it has no filesystem to walk. The same goes for opening a
+session by clicking a row.
+
+**The session index is cached, and the cache trusts size and mtime.** A
+transcript is only ever appended to, so a file whose size and modification time
+both match its cache entry is taken as unchanged. Something that rewrote a
+transcript in place while preserving both would go unnoticed. The subagent list
+is deliberately not cached, because those files appear and change without the
+session's own size or mtime moving.
+
+**An assertion can only be about shape.** Rules read tool names, timings, token
+counts and error flags. `Grep happens before Write` is answerable; anything
+about *what was said* is not, because nothing in the checker may read a body.
+That boundary is what lets a rule set run against a scrubbed tape, and it is not
+going to move.
+
+**A report and a rule set carry tool names.** Both are meant to be shared, and
+both keep the vocabulary that makes them useful — tool names, model ids, record
+types. Neither carries a word of message text, which `verify.mjs` proves by
+generating each from a transcript whose every text field is one distinctive
+marker and asserting the marker does not come out.
+
 **Wall-clock duration is usually not what you want.** Sessions are resumed for
 days; one probe fixture spans 213 hours of wall-clock and holds about thirteen
 hours of work. Active duration, which drops every gap over two minutes, sits
@@ -373,22 +460,23 @@ does not cover them.
 Out of scope, in rough order of how much I want them. Each line says why it is
 still out, because "not yet" without a reason is just a wish.
 
-- **A subagent run with a playhead of its own.** *The blind spot is closed —
-  delegated runs are detected, loaded and nested — but a nested run is a
-  summary, not a workbench.* Giving it a playhead means either a second one on
-  the same screen or a way to descend into it and come back, and both are a
-  navigation design rather than an addition.
+- **Nesting past one level.** *A delegated run can be stepped through now, but
+  a delegated run that delegates in turn is still a summary inside a summary.*
+  Every run in the corpus has `spawnDepth: 1`, so this has never mattered here;
+  it will matter the first time somebody's agent nests deeper, and the fix is a
+  breadcrumb rather than another overlay.
 - **Realigning a comparison after the divergence.** *The rule reports the first
   place two runs part and detects a swap or a short insertion; past that it
   stops.* A proper longest-common-subsequence alignment would keep the two runs
   side by side all the way down, at the cost of a rule that is much harder to
   put in one sentence above the result — and a rule the reader cannot state is
   worse than a limited one they can.
-- **Assertions that run outside the browser.** *The rules are already plain
-  data and the checker is a module with no DOM in it,* so `node` could run a
-  rule set against a tape in CI. What is missing is a file format for a rule
-  set and a decision about where it lives, and inventing one before anybody has
-  written rules in anger is how you get the wrong one.
+- **A rule that can be about a tool's arguments.** *Rules read tool names and
+  numbers; nothing reads a body, which is what lets a rule set run against a
+  scrubbed tape.* "Never run `rm -rf` outside the working directory" is a real
+  expectation and it needs the input. It would need a second class of rule that
+  a scrubbed tape cannot answer, and saying which rules a given tape can and
+  cannot check is the design problem, not the matching.
 - **Live recording while an agent runs**, rather than after the fact.
   *Deferred because tailing a file that is being appended to means handling
   half-written lines and a moving end, and the whole value of this tool so far
@@ -398,15 +486,19 @@ still out, because "not yet" without a reason is just a wish.
   index is already format-agnostic — steps, entries, tokens, tools — so an
   adapter is a parser and nothing else; the risk is generalising the shape
   before the one format I can actually check has stopped surprising me. It has
-  surprised me four times already: block-per-line, `is_error` usually absent,
-  `tool_result.content` sometimes an array, and timestamps that step backwards.
+  surprised me repeatedly — block-per-line, `is_error` usually absent,
+  `tool_result.content` sometimes an array, timestamps that step backwards, and
+  a model id that is not a model. [`docs/format-notes.md`](docs/format-notes.md)
+  is the running tally.
 
 ## Repository
 
 ```
 app/       the Next.js app — no UI library, no CSS framework, no state library
 lib/       parser, tape container, redactor, summary, filter, step delta,
-           subagents, comparison, assertions
+           subagents, comparison, assertions, session statistics, report
+fixtures/  invented runs and a rule set, so CI can check itself
+docs/      the transcript format, and the rule-set format
 bin/       the local helper
 docs/      what the transcript format actually is
 scripts/   builds the demo tape

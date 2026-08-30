@@ -1163,9 +1163,39 @@ for (const [what, re] of [
   ["a redacted tape keeps tool names on purpose", /keeps tool names/i],
   ["assertions can only be about shape", /only be about shape/i],
   ["CI does not run the in-page suite", /CI does not run the in-page suite/i],
+  ["the comparison's blind spot", /blind spot follows from the rule/i],
+  ["what a nested run still does not show", /nested run is not the whole workbench/i],
+  ["that cross-session statistics need the helper", /statistics come from the helper/i],
+  ["…and are unavailable in a deployed build", /deployed build has no such/i],
+  ["what the session cache trusts", /trusts size and mtime/i],
+  ["that an assertion can only be about shape", /assertion can only be about shape/i],
+  ["that a report and a rule set carry tool names", /carry tool names/i],
 ]) {
   ok(re.test(limits), "the limits section states: " + what);
 }
+
+// The format reference is the piece most likely to outlive the app, so it is
+// held to being usable by a stranger rather than being my working notes.
+const fmt = read("docs/format-notes.md");
+ok(fmt.length > 8000, "the format reference has some substance", `${fmt.length} chars`);
+for (const [what, re] of [
+  ["that a line is a block, not a message", /a line is one content \*\*block\*\*/i],
+  ["that isSidechain is always false in a main file", /isSidechain` is `false` on every record/i],
+  ["that timestamps run backwards", /Timestamps run backwards/i],
+  ["that a session is not a sitting", /A session is not a sitting/i],
+  ["where the files live", /~\/\.claude\/projects/],
+  ["the record types", /file-history-snapshot/],
+  ["that is_error is usually absent", /is_error` is usually absent/i],
+  ["that tool_result.content is sometimes an array", /not always a string/i],
+  ["what <synthetic> means", /<synthetic>` is not a model/i],
+  ["how subagents link to their parent", /only link to the parent/i],
+  ["the four failure signals", /Failure is four different signals/i],
+  ["what it does not know", /What this document does not know/i],
+]) {
+  ok(re.test(fmt), "the format reference states: " + what);
+}
+ok(/rules\.md/.test(readme), "the README points at the rule-set format");
+ok(/format-notes\.md/.test(readme), "…and at the transcript format");
 
 // walk every source file we ship
 const skip = new Set(["node_modules", ".next", ".git", "out"]);
