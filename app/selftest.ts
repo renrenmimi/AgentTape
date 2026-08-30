@@ -389,6 +389,85 @@ export async function runSelfTest(): Promise<void> {
     await settle(3);
   }
 
+  // ---- the filter reaches past the timeline -------------------------------
+  {
+    const tools = [...new Set(view.steps.map((x) => x.tool).filter(Boolean))];
+
+    // The messages panel marks matching entries rather than hiding them.
+    api().setFilter({ ...NO_FILTER, tools: [tools[0]] });
+    await settle(5);
+    ok(document.querySelectorAll(".entry-hit").length > 0,
+      "the messages panel marks entries that match");
+    ok(document.querySelectorAll(".entry-match").length > 0, "…in words, not only by opacity");
+    ok(document.querySelectorAll(".entry-miss").length > 0,
+      "…and dims the ones that do not, rather than removing them");
+    const shownEntries = document.querySelectorAll(".entry").length;
+    ok(shownEntries === document.querySelectorAll(".entry-hit, .entry-miss").length,
+      "every rendered entry is marked one way or the other", String(shownEntries));
+
+    // Where the playhead sits among the matches, so a silent n is legible.
+    api().setPos(0);
+    await settle(3);
+    const posEl = () => (document.querySelector(".filter-pos")?.textContent ?? "").trim();
+    ok(!!document.querySelector(".filter-pos"), "the filter bar reports the playhead's match position");
+    for (let i = 0; i < 200 && !/· last$/.test(posEl()); i++) {
+      api().seekNext(1);
+      await settle(1);
+    }
+    ok(/· last$/.test(posEl()), "…and says so when the playhead is on the last match", posEl());
+    const before = api().pos;
+    api().seekNext(1);
+    await settle(2);
+    ok(api().pos === before, "n at the last match does not move the playhead");
+    ok(/· last$/.test(posEl()), "…and the reason is still on screen", posEl());
+
+    api().setFilter(NO_FILTER);
+    await settle(3);
+    ok(!document.querySelector(".filter-pos"), "the position readout goes away with the filter");
+    ok(document.querySelectorAll(".entry-miss").length === 0, "…and so do the entry marks");
+  }
+
+  // ---- the filter controls take free input --------------------------------
+  {
+    const num = document.querySelector<HTMLInputElement>("input.filter-num");
+    ok(!!num && num.type === "number", "the size threshold takes any number, not only presets");
+    ok(!!num?.getAttribute("list"), "…while still offering common ones");
+    api().setFilter({ ...NO_FILTER, minChars: 1234 });
+    await settle(4);
+    ok(document.querySelector<HTMLInputElement>("input.filter-num")?.value === "1234",
+      "…and a number outside the presets is accepted");
+    api().setFilter(NO_FILTER);
+    await settle(3);
+
+    const menu = document.querySelector<HTMLDetailsElement>(".tool-menu");
+    if (menu) {
+      menu.open = true;
+      await settle(3);
+      const all = document.querySelectorAll(".tool-opt").length;
+      const search = document.querySelector<HTMLInputElement>(".tool-menu-search");
+      if (all > 6) {
+        ok(!!search, "a long tool menu carries a search box", `${all} tools`);
+      } else {
+        ok(!search, "a short tool menu does not need one", `${all} tools`);
+      }
+      menu.open = false;
+      await settle(2);
+    }
+  }
+
+  // ---- the demo can demonstrate everything --------------------------------
+  {
+    const compactBtn = [...document.querySelectorAll("button")]
+      .find((b) => /^compaction/.test((b.textContent ?? "").trim()));
+    ok(!!compactBtn && !(compactBtn as HTMLButtonElement).disabled,
+      "the demo has a compaction, so the jump control is usable",
+      compactBtn?.textContent ?? "missing");
+    ok(api().delegations.length > 0, "…and a delegation, so the absent-work panel has a subject");
+    const attrib = (document.querySelector(".chart-attrib")?.textContent ?? "").trim();
+    ok(/dropped at the compaction/.test(attrib),
+      "…and the compaction branch of the context attribution is demonstrable", attrib);
+  }
+
   // ---- colour is never the only signal ------------------------------------
   if (firstFail >= 0) {
     api().setPos(firstFail);

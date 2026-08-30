@@ -48,6 +48,8 @@ type Props = {
   jumpBy: number;
   peakCtx: number;
   compactAt: number[];
+  /** One byte per step: 1 matches the active filter. null means no filter. */
+  mask?: Uint8Array | null;
   /** What became of the payload the marked jump added. */
   trace: JumpTrace | null;
   /** Where the fall happened, numbered the way the rest of the UI numbers steps. */
@@ -81,7 +83,7 @@ function attribution(t: JumpTrace | null, fellAtShown: number): { text: string; 
 }
 
 export default function ContextChart({
-  steps, pos, jumpAt, jumpBy, peakCtx, compactAt, trace, fellAtShown, onPos, height = 62,
+  steps, pos, jumpAt, jumpBy, peakCtx, compactAt, mask = null, trace, fellAtShown, onPos, height = 62,
 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
@@ -187,12 +189,25 @@ export default function ContextChart({
       g.fill();
     }
 
+    // Matching steps get a rail along the bottom, so a filter answers "where
+    // in the growth did this happen" as well as "where on the timeline".
+    if (mask) {
+      const cols = Math.max(1, Math.floor(w - PAD * 2));
+      const hit = new Uint8Array(cols);
+      for (let i = 0; i < n; i++) {
+        if (!mask[i]) continue;
+        hit[Math.min(cols - 1, Math.max(0, Math.floor(xOf(i, w) - PAD)))] = 1;
+      }
+      g.fillStyle = line;
+      for (let c = 0; c < cols; c++) if (hit[c]) g.fillRect(PAD + c, h - 3, 1, 3);
+    }
+
     g.font = "9px " + mono;
     g.fillStyle = dim;
     g.textBaseline = "top";
     g.textAlign = "left";
     g.fillText(fmtTokens(peakCtx) + " peak", PAD + 2, 4);
-  }, [n, steps, top, xOf, yOf, compactAt, jumpAt, jumpBy, peakCtx]);
+  }, [n, steps, top, xOf, yOf, compactAt, jumpAt, jumpBy, peakCtx, mask]);
 
   const paintHead = useCallback(
     (p: number) => {

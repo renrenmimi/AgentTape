@@ -2,8 +2,10 @@
 //
 // Every word of this is invented. There is no such repository, no such bug and
 // no such run — it is a stage set, built so that each feature of the app has
-// something to show: two tool failures, one context blow-up, one long idle gap
-// and a compaction-free but steadily climbing context.
+// something to show: two tool failures, one context blow-up, one long idle gap,
+// one delegation to a subagent whose transcript is deliberately absent, and one
+// compaction, so the "dropped at the compaction" branch of the context
+// attribution has a run it can be demonstrated on.
 //
 //   node scripts/make-demo.mjs
 import { writeFileSync } from "node:fs";
@@ -44,6 +46,11 @@ const result = (id, text, gap, ctx, failed) => {
   push(s, gap, text);
 };
 
+/** A context compaction, as the writer records it: a system record with figures. */
+const compact = (pre, post, gap, text) =>
+  push({ k: "system", y: "system", b: -1, c: text.length, x: pre,
+         z: [pre, post, pre - post, "auto"], p: line(text) }, gap, text);
+
 const line = (s) => {
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length <= 96 ? flat : flat.slice(0, 95) + "…";
@@ -80,25 +87,63 @@ result("t1",
   2 * S, 12400);
 
 think("m2",
-  "Line 22 is inside something that runs per line item — `running` being reassigned in a loop. " +
-  "That is the compounding. Read the file.",
+  "Before I read the whole file, get a second pair of eyes on the test suite — I want to know " +
+  "whether anything else depends on the compounding behaviour before I change it.",
+  3 * S, 13200, [980, 190, 12220, 980]);
+
+call("m2", "t1a", "Agent", {
+  description: "audit coupon dependants",
+  prompt: "Find every test and call site that depends on applyDiscount being called per item.",
+}, 2 * S, 13200);
+result("t1a",
+  "Checked 31 test files and 12 call sites. Nothing outside src/checkout depends on the " +
+  "per-item behaviour; two tests assert the compounded figure directly and will need updating " +
+  "with the fix. Full working notes are in this agent's own transcript.",
+  4 * M + 12 * S, 13600);
+
+think("m2b",
+  "Good — the blast radius is two tests. Now read the file.",
   3 * S, 14100, [1720, 240, 12380, 1720]);
 
-call("m2", "t2", "Read", { file_path: "src/checkout/total.ts" }, 1 * S, 14100);
+call("m2b", "t2", "Read", { file_path: "src/checkout/total.ts" }, 1 * S, 14100);
 
-// The blow-up: a 2,900-line file read whole into the array.
-result("t2",
-  "     1\timport { applyDiscount, parseCoupon } from \"./coupon\";\n" +
-  "     2\timport type { Cart, LineItem, Money } from \"../types\";\n" +
-  "     3\t\n" +
-  "     4\t// … 2,900 lines of checkout rules, tax tables and currency handling …\n" +
-  "    14\t  const discount = coupon ? coupon.rate : 0;\n" +
-  "    20\t  let running = 0;\n" +
-  "    21\t  for (const item of cart.items) {\n" +
-  "    22\t    running = applyDiscount(running + item.price * item.qty, discount);\n" +
-  "    23\t  }\n" +
-  "  2900\t}\n",
-  4 * S, 18200);
+// The blow-up: a 2,900-line file read whole into the array. It is written out
+// in full — invented line by invented line — because a demo that only claims to
+// be large cannot demonstrate the size filter, the truncated body, or the
+// windowed reveal. Roughly 78k tokens of context arrive here and never leave
+// until the compaction.
+const bigRead = (() => {
+  const head = [
+    'import { applyDiscount, parseCoupon } from "./coupon";',
+    'import type { Cart, LineItem, Money } from "../types";',
+    "",
+  ];
+  const rules = [
+    "const TAX_ROUNDING = 2;",
+    "const ZERO_RATED = new Set([\"GB-BOOKS\", \"IE-FOOD\"]);",
+    "function normaliseCurrency(v: Money): Money { return { ...v, code: v.code.toUpperCase() }; }",
+    "function lineSubtotal(item: LineItem): number { return item.price * item.qty; }",
+    "function isZeroRated(item: LineItem): boolean { return ZERO_RATED.has(item.taxClass); }",
+    "function round(n: number): number { return Math.round(n * 100) / 100; }",
+  ];
+  const lines = [...head];
+  while (lines.length < 2899) {
+    const i = lines.length;
+    if (i === 13) lines.push("  const discount = coupon ? coupon.rate : 0;");
+    else if (i === 18) lines.push("");
+    else if (i === 19) lines.push("  let running = 0;");
+    else if (i === 20) lines.push("  for (const item of cart.items) {");
+    else if (i === 21) lines.push("\trunning = applyDiscount(running + item.price * item.qty, discount);");
+    else if (i === 22) lines.push("  }");
+    else if (i === 23) lines.push("  return round(running);");
+    else if (i % 17 === 0) lines.push("");
+    else if (i % 5 === 0) lines.push(rules[i % rules.length]);
+    else lines.push(`function rule${i}(cart: Cart): number { return lineSubtotal(cart.items[${i % 9}]) * ${1 + (i % 4)}; }`);
+  }
+  lines.push("}");
+  return lines.map((t, k) => String(k + 1).padStart(6) + "\t" + t).join("\n") + "\n";
+})();
+result("t2", bigRead, 4 * S, 18200);
 
 think("m3",
   "There it is. `applyDiscount` is called once per iteration, so with two items the discount " +
@@ -160,28 +205,34 @@ result("t6",
   9 * S, 98600, true);
 
 // The agent stops here. Thirty-eight minutes of nothing.
+// It comes back to a compacted context: the 78k file read is gone from the
+// array, which is what the context attribution should say happened to it.
+compact(98600, 21400, 38 * M,
+  "Context compacted: 98,600 tokens in the array, 21,400 kept. The whole-file read from step 8 " +
+  "was dropped.");
+
 think("m7",
   "Floating point, not logic — the fix is right and the assertion is too strict for binary " +
   "floats. `round` is applied to the discounted total now rather than to an already-rounded " +
   "running sum, so the last cent arrives with a tail. Round inside `applyDiscount` instead of " +
   "outside it, so every discounted amount is money-shaped before it leaves.",
-  38 * M, 99200, [780, 340, 98420, 600]);
+  6 * S, 22100, [700, 340, 21400, 700]);
 
 call("m7", "t7", "Edit", {
   file_path: "src/checkout/coupon.ts",
   old_string: "  return amount * (1 - rate);",
   new_string: "  return Math.round(amount * (1 - rate) * 100) / 100;",
-}, 3 * S, 99200);
-result("t7", "Applied 1 edit to src/checkout/coupon.ts:\n   9   →  return Math.round(amount * (1 - rate) * 100) / 100;", 2 * S, 99200);
+}, 3 * S, 22100);
+result("t7", "Applied 1 edit to src/checkout/coupon.ts:\n   9   →  return Math.round(amount * (1 - rate) * 100) / 100;", 2 * S, 22100);
 
-call("m8", "t8", "Bash", { command: "npm test -- checkout" }, 2 * S, 99600);
+call("m8", "t8", "Bash", { command: "npm test -- checkout" }, 2 * S, 22900);
 result("t8",
   "PASS  src/checkout/total.test.ts\n" +
   "  ✓ applies a coupon once across multiple items (3 ms)\n" +
   "  ✓ leaves an uncoupled cart alone\n" +
   "  ✓ rounds to two decimal places\n\n" +
   "Tests: 3 passed, 3 total",
-  8 * S, 99600);
+  8 * S, 22900);
 
 say("m9",
   "Fixed. `applyDiscount` was being called inside the per-item loop, so with two items the " +
@@ -190,7 +241,7 @@ say("m9",
   "so the result is money-shaped.\n\n" +
   "Two files changed: src/checkout/total.ts (lines 22 and 24) and src/checkout/coupon.ts " +
   "(line 9). All three checkout tests pass.",
-  3 * S, 99900);
+  3 * S, 23400);
 
 // ---------------------------------------------------------------- write
 
@@ -211,4 +262,6 @@ writeFileSync(out, serializeTape(file));
 console.log(`demo.tape.json: ${steps.length} steps, ${Object.keys(bodies).length} bodies, ` +
   `${(file.session.bytes / 1024).toFixed(1)} KB, ` +
   `${steps.filter((s) => s.e).length} failures, ` +
+  `${steps.filter((s) => s.n === "Agent").length} delegation, ` +
+  `${steps.filter((s) => s.z).length} compaction, ` +
   `longest gap ${Math.round(Math.max(...steps.slice(1).map((s, i) => s.ts - steps[i].ts)) / 60000)} min`);

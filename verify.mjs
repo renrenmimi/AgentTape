@@ -753,6 +753,20 @@ if (existsSync(demoPath)) {
   ok(first.bodies && Object.keys(first.bodies).length >= 20,
     "the demo carries readable bodies rather than placeholders",
     `${Object.keys(first.bodies ?? {}).length} bodies`);
+
+  // Every feature needs something to show, or it cannot be demonstrated and
+  // cannot be asserted against in the browser either.
+  ok(ds.compactAt.length >= 1, "the demo has a compaction", String(ds.compactAt.length));
+  const demoDels = findDelegations(demo.steps, pairTools(demo.steps));
+  ok(demoDels.length >= 1, "the demo has a delegation", String(demoDels.length));
+  ok(demoDels.every((d) => d.run === null), "…whose transcript is deliberately absent");
+  const demoTrace = traceJump(demo.steps, ds.jumpAt, ds.jumpBy);
+  ok(demoTrace.fellToCompaction === true,
+    "the demo exercises the dropped-at-the-compaction branch of the attribution");
+  ok(ds.tools.length >= 4, "the demo calls several tools", ds.tools.map((t) => t.name).join(","));
+  const demoFx = buildFilterIndex(demo.steps, pairTools(demo.steps));
+  ok(demoFx.tools.some((t) => t.name === "Agent"), "…including one that delegates");
+  ok(demo.steps.some((x) => x.chars > 1000), "the demo has a step big enough for the size filter");
 }
 
 // ---------------------------------------------------------------- repository

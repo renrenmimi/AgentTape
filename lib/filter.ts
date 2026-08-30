@@ -28,15 +28,12 @@ export function isActive(f: Filter): boolean {
   return f.tools.length > 0 || f.minChars > 0 || f.query.trim() !== "";
 }
 
-/** Presets for the size threshold, chosen to bracket what a real run holds. */
-export const SIZE_STEPS: { label: string; value: number }[] = [
-  { label: "any size", value: 0 },
-  { label: "≥ 1,000 chars", value: 1_000 },
-  { label: "≥ 10,000 chars", value: 10_000 },
-  { label: "≥ 50,000 chars", value: 50_000 },
-  { label: "≥ 200,000 chars", value: 200_000 },
-  { label: "≥ 1,000,000 chars", value: 1_000_000 },
-];
+/**
+ * Suggested thresholds, offered as a datalist rather than a closed list. They
+ * bracket what a real run holds; the control still takes any number, because
+ * the interesting figure is often one the presets do not contain.
+ */
+export const SIZE_PRESETS = [1_000, 10_000, 50_000, 200_000, 1_000_000];
 
 export type FilterIndex = {
   /** Effective tool name per global step index; "" where there is none. */
@@ -109,6 +106,29 @@ export function applyFilter(
     count++;
   }
   return { mask, count };
+}
+
+/**
+ * Which match the playhead is sitting on, 1-based, or 0 when it is not on one.
+ * This is what makes a silent `n` at the last match legible: the count says
+ * "41 of 41" and the key having done nothing stops being a mystery.
+ */
+export function matchOrdinal(mask: Uint8Array, pos: number): number {
+  if (pos < 0 || pos >= mask.length || !mask[pos]) return 0;
+  let n = 0;
+  for (let i = 0; i <= pos; i++) if (mask[i]) n++;
+  return n;
+}
+
+/** One byte per messages-array entry: 1 when any step in it matches. */
+export function entryMask(entryCount: number, steps: Step[], mask: Uint8Array): Uint8Array {
+  const out = new Uint8Array(entryCount);
+  for (let k = 0; k < steps.length && k < mask.length; k++) {
+    if (!mask[k]) continue;
+    const e = steps[k].entry;
+    if (e >= 0 && e < entryCount) out[e] = 1;
+  }
+  return out;
 }
 
 /** Next or previous matching position, or -1. Wraps nowhere: it stops at the ends. */
