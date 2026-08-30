@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Step } from "@/lib/format";
-import { fmtTokens } from "@/lib/summary";
+import { fmtInt, fmtTokens, type JumpTrace } from "@/lib/summary";
 
 const PAD = 8;
 
@@ -47,12 +47,40 @@ type Props = {
   jumpBy: number;
   peakCtx: number;
   compactAt: number[];
+  /** What became of the payload the marked jump added. */
+  trace: JumpTrace | null;
+  /** Where the fall happened, numbered the way the rest of the UI numbers steps. */
+  fellAtShown: number;
   onPos: (n: number) => void;
   height?: number;
 };
 
+/**
+ * One line about the marked jump. Context is a single number per turn, not an
+ * inventory, so this reports what it can prove — that the level never fell back
+ * — and names the inference where it is making one.
+ */
+function attribution(t: JumpTrace | null, fellAtShown: number): { text: string; tone: string } | null {
+  if (!t) return null;
+  if (t.unknown) return { text: "no context figures in this tape, so the payload cannot be traced", tone: "dim" };
+  const turns = `${fmtInt(t.turnsSince)} turn${t.turnsSince === 1 ? "" : "s"} re-sent it`;
+  const reread = t.resent > 0 ? ` · ${fmtTokens(t.resent)} of re-reading` : "";
+  if (t.fellAt < 0)
+    return { text: `still in the array ${fmtInt(t.stepsSince)} steps later · ${turns}${reread}`, tone: "warn" };
+  if (t.fellToCompaction)
+    return {
+      text: `dropped at the compaction ${fmtInt(t.stepsSince)} steps later · ${turns} first${reread}`,
+      tone: "ok",
+    };
+  return {
+    text: `context fell below this level at step ${fmtInt(fellAtShown)}, ` +
+      `${fmtInt(t.stepsSince)} steps later — nothing in the transcript says why · ${turns} first${reread}`,
+    tone: "dim",
+  };
+}
+
 export default function ContextChart({
-  steps, pos, jumpAt, jumpBy, peakCtx, compactAt, onPos, height = 62,
+  steps, pos, jumpAt, jumpBy, peakCtx, compactAt, trace, fellAtShown, onPos, height = 62,
 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
@@ -218,15 +246,20 @@ export default function ContextChart({
       <canvas ref={base} aria-hidden />
       <canvas ref={head} aria-hidden />
       {jumpBy > 0 && (
-        <button
-          type="button"
-          className="chart-note"
-          style={{ pointerEvents: "auto", border: 0, cursor: "pointer" }}
-          onClick={() => onPos(jumpAt)}
-          title="Jump to the step that added the most context"
-        >
-          largest jump <b>+{fmtTokens(jumpBy)}</b> at step {jumpAt + 1}
-        </button>
+        <div className="chart-notes">
+          <button
+            type="button"
+            className="chart-note"
+            onClick={() => onPos(jumpAt)}
+            title="Jump to the step that added the most context"
+          >
+            largest jump <b>+{fmtTokens(jumpBy)}</b> at step {fmtInt(jumpAt + 1)}
+          </button>
+          {(() => {
+            const a = attribution(trace, fellAtShown);
+            return a ? <span className={"chart-attrib chart-attrib-" + a.tone}>{a.text}</span> : null;
+          })()}
+        </div>
       )}
       <p className="sr-only" aria-live="polite">
         {cur ? `Context at step ${pos + 1}: ${fmtTokens(cur.ctx)} tokens. Peak ${fmtTokens(peakCtx)}.` : ""}

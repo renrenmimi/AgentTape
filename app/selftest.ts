@@ -178,6 +178,20 @@ export async function runSelfTest(): Promise<void> {
     ok(false, "the demo tape contains at least one failed step");
   }
 
+  // ---- the context jump is attributed, not just marked --------------------
+  {
+    const note = document.querySelector(".chart-note");
+    ok(!!note && /largest jump/.test(note.textContent ?? ""), "the largest jump is marked",
+      note?.textContent ?? "missing");
+    const attrib = document.querySelector(".chart-attrib");
+    ok(!!attrib, "the marked jump carries an attribution line");
+    const text = (attrib?.textContent ?? "").trim();
+    ok(/still in the array|dropped at the compaction|fell below this level|cannot be traced/.test(text),
+      "the attribution says what became of the payload, in one of the four forms it can prove", text);
+    ok(/re-sent it|cannot be traced/.test(text),
+      "…and says what re-sending it has cost", text);
+  }
+
   // ---- the array delta ----------------------------------------------------
   {
     const rows = () => [...document.querySelectorAll(".delta dt")].map((e) => (e.textContent ?? "").trim());
