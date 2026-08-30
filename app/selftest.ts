@@ -15,7 +15,7 @@ import { ctx2d } from "./canvas";
 type Filterish = { tools: string[]; minChars: number; query: string };
 
 type Api = {
-  tape: unknown;
+  tape: { steps: unknown[] } | null;
   view: { steps: { i: number; err: boolean; tool: string }[] } | null;
   pos: number;
   setPos: (n: number) => void;
@@ -45,7 +45,62 @@ type Api = {
 
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
 
+/** The demo tape's own length, so "is the demo loaded" is a fact, not a guess. */
+const DEMO_STEPS = 31;
+
 const frame = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
+/**
+ * Wait for the observable consequence, never for a promise or a frame count.
+ *
+ * This is the rule the whole teardown problem came from. `await a.onDemo()`
+ * resolves when the fetch and the parse are done, which says nothing about
+ * whether React has re-rendered with the result — and `a` is the api object
+ * captured at the first render, so its callbacks close over that render's
+ * state. `await settle(6)` is the same bet in a different currency: six frames
+ * is enough until something upstream does network work and it is not.
+ *
+ * So nothing in this suite waits on a promise or on a number of frames to
+ * establish that a state change has landed. It waits for the thing it is
+ * actually waiting for, and says so when it does not arrive.
+ */
+const quiet = async (read: () => string | number, same = 3): Promise<void> => {
+  let last = read();
+  let n = 0;
+  for (let i = 0; i < 120; i++) {
+    await frame();
+    const v = read();
+    if (v === last) { if (++n >= same) return; } else { last = v; n = 0; }
+  }
+};
+
+/**
+ * Wait until the thing stops changing.
+ *
+ * `until` needs a consequence to wait for, and an assertion that nothing
+ * happened has none — which is why `seekNext` at the last match was checked
+ * after a fixed two frames and read a playhead position that had not finished
+ * moving from the step before. For those, the state to wait on is quiescence:
+ * the same observation several times running.
+ */
+/**
+ * Put the playhead somewhere, and keep asking until it is there.
+ *
+ * `setPos` early-returns when the view is momentarily absent, which it is for a
+ * frame or two after a tape is reloaded — so a single call followed by a wait
+ * can be a call that did nothing followed by a wait for nothing. Issuing it
+ * until the position is observed is the only version of this that is not a
+ * race.
+ */
+
+
+const until = async (cond: () => boolean, tries = 240): Promise<boolean> => {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return true;
+    await frame();
+  }
+  return cond();
+};
 const settle = async (n = 3) => { for (let i = 0; i < n; i++) await frame(); };
 
 function api(): Api {
@@ -196,6 +251,63 @@ export async function runSelfTest(): Promise<void> {
   report(results);
 }
 
+/**
+ * What a block needs before it starts, checked and repaired in one place.
+ *
+ * This is the change that matters, and the eighteen failures are why. They were
+ * downstream symptoms with no diagnostic content in them: eleven said "the
+ * shortcut sheet did not open" when the fault was that a block three sections
+ * earlier had left a four-step synthetic tape loaded with an overlay on top of
+ * it. Eighteen mysterious failures should have been one clear one.
+ *
+ * So every block declares what it starts from. If the state is wrong it is put
+ * right; if it cannot be put right, this throws naming the block and what it
+ * actually found, which the wrapper turns into a single failed assertion. It
+ * adds no assertion of its own — the frozen count from the previous commit is
+ * what makes a score comparable, and a guard that inflates the denominator
+ * every time somebody adds a block would undo it.
+ */
+async function need(block: string): Promise<void> {
+  const a = api();
+  a.setInside(-1);
+  a.setComparing(false);
+  a.setAsserting(false);
+  a.setKeysOpen(false);
+
+  const shut = () =>
+    !document.querySelector(".nested-wb") &&
+    !document.querySelector(".cmp") &&
+    !document.querySelector(".sheet") &&
+    !document.querySelector(".asserts");
+  if (!(await until(shut))) {
+    const open = [".nested-wb", ".cmp", ".sheet", ".asserts"].filter((c) => document.querySelector(c));
+    throw new Error(`${block}: an overlay from the previous block would not close (${open.join(" ")})`);
+  }
+
+  if (api().tape?.steps.length !== DEMO_STEPS) {
+    await api().onDemo();
+    if (!(await until(() => api().tape?.steps.length === DEMO_STEPS))) {
+      throw new Error(
+        `${block}: needs the demo tape (${DEMO_STEPS} steps) and found ` +
+        `${api().tape?.steps.length ?? 0} — a previous block left its own tape loaded`,
+      );
+    }
+  }
+  if (!(await until(() => !!document.querySelector(".track-hit")))) {
+    throw new Error(`${block}: the demo is loaded but the workbench did not render`);
+  }
+  // The tape and the view are two different facts. While a delegated run is
+  // open the view is the subagent's steps, and closing the overlay takes the
+  // DOM out before it takes the view out — so a block can start with the demo
+  // loaded and still be asserting against a four-step view.
+  if (!(await until(() => api().view?.steps.length === DEMO_STEPS))) {
+    throw new Error(
+      `${block}: the demo is loaded but the view is showing ` +
+      `${api().view?.steps.length ?? 0} steps — a delegated run is still open`,
+    );
+  }
+}
+
 async function runBlocks(
   a: Api,
   ok: (cond: boolean, label: string, note?: string) => void,
@@ -278,6 +390,7 @@ async function runBlocks(
 
   // ---- delegated work is visible even with no subagent file ---------------
   {
+    await need("delegated work is visible even with no subagent file");
     api().loadTapeFile(tapeWithDelegation());
     await settle(6);
     const dels = api().delegations;
@@ -313,6 +426,7 @@ async function runBlocks(
 
   // ---- a report you can paste ---------------------------------------------
   {
+    await need("a report you can paste");
     const btn = [...document.querySelectorAll(".strip-actions button")]
       .find((b) => /^report$/i.test((b.textContent ?? "").trim()));
     ok(!!btn, "the header offers a report");
@@ -340,13 +454,14 @@ async function runBlocks(
 
   // ---- assertions ---------------------------------------------------------
   {
+    await need("assertions");
     const strip = [...document.querySelectorAll(".strip-actions button")]
       .map((e) => (e.textContent ?? "").trim());
     ok(strip.some((t) => /assertion/i.test(t)),
       "the header reports whether the run holds its stated expectations", strip.join(" | "));
 
     api().setAsserting(true);
-    await settle(5);
+    await until(() => !!document.querySelector(".asserts"));
     const panel = document.querySelector(".asserts");
     ok(!!panel, "the assertions panel opens");
     ok(panel?.getAttribute("role") === "dialog", "…as a dialog");
@@ -372,7 +487,7 @@ async function runBlocks(
     ok(!!document.querySelector(".track-hit"), "…and lands back on the workbench");
 
     api().setAsserting(true);
-    await settle(4);
+    await until(() => !!document.querySelector(".asserts"));
     // A rule that cannot be tested is not a pass.
     api().setRules([{ kind: "before", first: "NoSuchTool", then: "AlsoMissing" }]);
     await settle(5);
@@ -423,6 +538,7 @@ async function runBlocks(
 
   // ---- a delegated run can be stepped through -----------------------------
   {
+    await need("a delegated run can be stepped through");
     // A tape with a delegation, and a subagent run attached to it by hand, so
     // the nested workbench has something to open without a file on disk.
     api().loadTapeFile(tapeWithDelegation());
@@ -471,8 +587,9 @@ async function runBlocks(
 
   // ---- comparing two runs -------------------------------------------------
   {
+    await need("comparing two runs");
     api().setComparing(true);
-    await settle(4);
+    await until(() => !!document.querySelector(".cmp"));
     const panel = document.querySelector(".cmp");
     ok(!!panel, "the compare panel opens");
     ok(panel?.getAttribute("role") === "dialog" && panel?.getAttribute("aria-modal") === "true",
@@ -484,7 +601,10 @@ async function runBlocks(
     ok(!!useDemo && /demo/i.test(useDemo.textContent ?? ""), "…with a way to load a second run",
       useDemo?.textContent ?? "missing");
     useDemo?.click();
-    await settle(8);
+    // Loading the second run does a fetch and a parse. Waiting eight frames for
+    // that was a bet that held until the blocks before this one started doing
+    // network work of their own; the verdict appearing is the actual signal.
+    await until(() => !!document.querySelector(".cmp-verdict"));
 
     const rule = document.querySelector(".cmp-rule-tag");
     ok(!!rule && /tool-call sequence/.test(rule.textContent ?? ""),
@@ -518,6 +638,7 @@ async function runBlocks(
 
   // ---- the context jump is attributed, not just marked --------------------
   {
+    await need("the context jump is attributed, not just marked");
     const note = document.querySelector(".chart-note");
     ok(!!note && /largest jump/.test(note.textContent ?? ""), "the largest jump is marked",
       note?.textContent ?? "missing");
@@ -532,6 +653,7 @@ async function runBlocks(
 
   // ---- the array delta ----------------------------------------------------
   {
+    await need("the array delta");
     const rows = () => [...document.querySelectorAll(".delta dt")].map((e) => (e.textContent ?? "").trim());
     api().setPos(0);
     await settle(3);
@@ -559,6 +681,7 @@ async function runBlocks(
 
   // ---- filtering ----------------------------------------------------------
   {
+    await need("filtering");
     const ticksBefore = countPaintedTicks(n);
     const tools = [...new Set(view.steps.map((x) => x.tool).filter(Boolean))];
     ok(tools.length > 0, "the demo tape calls tools", tools.join(","));
@@ -622,6 +745,7 @@ async function runBlocks(
 
   // ---- the filter reaches past the timeline -------------------------------
   {
+    await need("the filter reaches past the timeline");
     const tools = [...new Set(view.steps.map((x) => x.tool).filter(Boolean))];
 
     // The messages panel marks matching entries rather than hiding them.
@@ -648,8 +772,13 @@ async function runBlocks(
     ok(/· last$/.test(posEl()), "…and says so when the playhead is on the last match", posEl());
     const before = api().pos;
     api().seekNext(1);
-    await settle(2);
-    ok(api().pos === before, "n at the last match does not move the playhead");
+    // Give it a chance to move before asserting that it did not. An assertion
+    // about nothing happening that does not wait is an assertion that passes
+    // because nothing has rendered yet.
+    await until(() => api().pos !== before, 10);
+    ok(api().pos === before, "n at the last match does not move the playhead",
+      `${before} → ${api().pos} · matches ${api().matches}/${api().view?.steps.length ?? 0}` +
+      ` · readout "${posEl()}"`);
     ok(/· last$/.test(posEl()), "…and the reason is still on screen", posEl());
 
     api().setFilter(NO_FILTER);
@@ -660,6 +789,7 @@ async function runBlocks(
 
   // ---- the filter controls take free input --------------------------------
   {
+    await need("the filter controls take free input");
     const num = document.querySelector<HTMLInputElement>("input.filter-num");
     ok(!!num && num.type === "number", "the size threshold takes any number, not only presets");
     ok(!!num?.getAttribute("list"), "…while still offering common ones");
@@ -688,6 +818,7 @@ async function runBlocks(
 
   // ---- the demo can demonstrate everything --------------------------------
   {
+    await need("the demo can demonstrate everything");
     const compactBtn = [...document.querySelectorAll("button")]
       .find((b) => /^compaction/.test((b.textContent ?? "").trim()));
     ok(!!compactBtn && !(compactBtn as HTMLButtonElement).disabled,
@@ -715,11 +846,12 @@ async function runBlocks(
 
   // ---- the keys are discoverable and they work ----------------------------
   {
+    await need("the keys are discoverable and they work");
     const press = (key: string, opts: KeyboardEventInit = {}) =>
       window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts }));
 
     press("?");
-    await settle(4);
+    await until(() => !!document.querySelector(".sheet"));
     ok(!!document.querySelector(".sheet"), "? opens the shortcut sheet");
     const listed = [...document.querySelectorAll(".sheet-row dd")].map((e) => (e.textContent ?? "").trim());
     ok(listed.length >= 8, "…and it lists the keys in one place", String(listed.length));
@@ -733,9 +865,14 @@ async function runBlocks(
       "…and focus moves into it");
 
     // Tab must not walk out the back of a dialog into the workbench behind it.
-    for (let i = 0; i < 8; i++) {
+    // Eight presses was a guess at "more stops than the sheet has"; the thing
+    // being tested is that focus is still inside afterwards, so press until it
+    // has been round at least once and stop on the observable state.
+    const sheetEl = document.querySelector(".sheet");
+    for (let i = 0; i < 24; i++) {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-      await settle(1);
+      await frame();
+      if (i >= 7 && sheetEl?.contains(document.activeElement)) break;
     }
     ok(document.querySelector(".sheet")?.contains(document.activeElement) === true,
       "Tab stays inside the dialog rather than escaping behind it");
@@ -746,7 +883,7 @@ async function runBlocks(
 
     // c and a reach the two overlays, and Escape gets back out of each.
     press("c");
-    await settle(5);
+    await until(() => !!document.querySelector(".cmp"));
     ok(!!document.querySelector(".cmp"), "c opens the comparison");
     ok(document.activeElement === document.querySelector(".cmp"), "…with focus inside it");
     press("Escape");
@@ -754,7 +891,7 @@ async function runBlocks(
     ok(!document.querySelector(".cmp"), "Escape closes the comparison");
 
     press("a");
-    await settle(5);
+    await until(() => !!document.querySelector(".asserts"));
     ok(!!document.querySelector(".asserts"), "a opens the assertions");
     press("Escape");
     await settle(5);
@@ -830,6 +967,7 @@ async function runBlocks(
 
   // ---- the browser can build the index itself -----------------------------
   {
+    await need("the browser can build the index itself");
     const support = await api().pickerSupport();
     ok(["directory-picker", "webkitdirectory", "none"].includes(support),
       "the folder picker is feature-detected, not assumed", support);
@@ -910,6 +1048,7 @@ async function runBlocks(
 
   // ---- the overview, if the helper is answering ---------------------------
   {
+    await need("the overview, if the helper is answering");
     const reachable = await fetch("http://127.0.0.1:4319/health")
       .then((r) => r.ok)
       .catch(() => false);
