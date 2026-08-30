@@ -9,6 +9,8 @@
 //   node bin/agenttape.mjs check <rules.json> <tape.jsonl|tape.tape.json>
 //                                     check a run against stated expectations
 //                                     and exit non-zero if any of them failed
+//   node bin/agenttape.mjs index      build the cross-session statistics index
+//   node bin/agenttape.mjs index --json   …and print it, for analysis
 //
 // It runs alongside `npm run dev` and answers two questions for the page:
 // which sessions exist, and give me that one. It does not serve the app —
@@ -27,20 +29,34 @@
 //     The same rule covers a subagent's `description`: it is written from the
 //     prompt that spawned it, so the sidecar is read for its ids and never for
 //     that field
-//   * write anything, anywhere
+//   * write anything inside ~/.claude/projects, or anywhere at all except one
+//     cache file of its own, in its own cache directory. That cache holds
+//     statistics — counts, durations, token totals, tool names — and no text
+//     from any transcript
 //
 // No dependencies. Node 22.18 or newer, because `check` imports the parser and
 // the rule checker as TypeScript modules and relies on the type stripping that
 // became unflagged there.
 
 import { createReadStream } from "node:fs";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 
 const PROJECTS = join(homedir(), ".claude", "projects");
+
+/**
+ * The one place this program writes. Deliberately nowhere near the transcripts:
+ * a cache under ~/.claude/projects would be a file the helper had put inside
+ * the tree it promises only to read.
+ */
+const CACHE_DIR = process.platform === "darwin"
+  ? join(homedir(), "Library", "Caches", "agenttape")
+  : join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "agenttape");
+const CACHE_FILE = join(CACHE_DIR, "sessions.json");
+const CACHE_FORMAT = "agenttape-index/1";
 const DEFAULT_PORT = 4319;
 // Claude Code names project directories after the encoded path, which starts
 // with a hyphen — so a leading hyphen has to be allowed. What must not get
@@ -176,6 +192,115 @@ async function listAgents(project, session) {
     out.push(rec);
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// ------------------------------------------------------------- statistics
+
+/**
+ * Statistics for one session, read one line at a time and never held whole.
+ *
+ * The record itself is built by lib/stats.ts, which is where the property that
+ * matters is documented and tested: no field of it can hold a sentence.
+ */
+async function sessionStatsFor(project, session, path, st) {
+  const { createIndexer, pushLine, finishIndex, pairTools } = await import("../lib/parser.ts");
+  const { sessionStats } = await import("../lib/stats.ts");
+
+  const ix = createIndexer(session);
+  let off = 0;
+  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of rl) {
+    const len = Buffer.byteLength(line);
+    pushLine(ix, line, off, len);
+    off += len + 1;
+  }
+  const { meta, steps, entries } = finishIndex(ix);
+  return sessionStats(
+    { project, session, bytes: st.size, mtime: st.mtimeMs },
+    meta, steps, entries, pairTools(steps),
+  );
+}
+
+async function readCache() {
+  try {
+    const raw = JSON.parse(await readFile(CACHE_FILE, "utf8"));
+    if (raw?.format !== CACHE_FORMAT || typeof raw.entries !== "object") return {};
+    return raw.entries ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeCache(entries) {
+  try {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await writeFile(CACHE_FILE, JSON.stringify({ format: CACHE_FORMAT, entries }));
+  } catch (e) {
+    // A cache that cannot be written is slow, not broken.
+    console.error(`  could not write the index cache: ${e.message}`);
+  }
+}
+
+/**
+ * Statistics for every session, using the cache for the ones that have not
+ * changed. A transcript is only appended to, so file size and mtime together
+ * are enough to know an entry is still true; either changing re-indexes it.
+ */
+async function buildIndex({ onProgress } = {}) {
+  const cache = await readCache();
+  const entries = {};
+  const found = [];
+
+  let projects;
+  try {
+    projects = await readdir(PROJECTS, { withFileTypes: true });
+  } catch {
+    return { sessions: [], cached: 0, indexed: 0, error: `no ${PROJECTS}` };
+  }
+
+  for (const p of projects) {
+    if (!p.isDirectory()) continue;
+    let files;
+    try {
+      files = await readdir(join(PROJECTS, p.name), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      if (!f.isFile() || extname(f.name) !== ".jsonl") continue;
+      const path = join(PROJECTS, p.name, f.name);
+      const st = await stat(path).catch(() => null);
+      if (st) found.push({ project: p.name, session: f.name.slice(0, -6), path, st });
+    }
+  }
+
+  let cached = 0;
+  let indexed = 0;
+  for (const [i, f] of found.entries()) {
+    const key = `${f.project}/${f.session}`;
+    const hit = cache[key];
+    if (hit && hit.bytes === f.st.size && hit.mtime === f.st.mtimeMs) {
+      entries[key] = hit;
+      cached++;
+    } else {
+      try {
+        entries[key] = await sessionStatsFor(f.project, f.session, f.path, f.st);
+        indexed++;
+      } catch {
+        continue; // a file that will not index is left out rather than fatal
+      }
+    }
+    onProgress?.(i + 1, found.length, indexed, cached);
+  }
+
+  // Written before the agent lists are attached, on purpose: the cache is keyed
+  // by the transcript's own size and mtime, and a subagent file can appear or
+  // change without either moving. Anything that can go stale that way is
+  // recomputed on every build instead.
+  await writeCache(entries);
+  const sessions = Object.values(entries).sort((a, b) => b.mtime - a.mtime);
+  for (const s of sessions) s.agents = await listAgents(s.project, s.session);
+  return { sessions, cached, indexed };
 }
 
 // ---------------------------------------------------------------- printing
@@ -354,12 +479,19 @@ function serve(initial) {
       return;
     }
 
+    if (url.pathname === "/overview") {
+      const built = await buildIndex();
+      json(res, 200, built);
+      return;
+    }
+
     if (url.pathname === "/health") { json(res, 200, { ok: true, projects: PROJECTS }); return; }
 
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end(
       "AgentTape helper.\n\n" +
       "  GET /sessions                          the session index\n" +
+      "  GET /overview                          statistics for every session\n" +
       "  GET /file?project=&session=            one transcript, read-only\n" +
       "  GET /subagent?project=&session=&agent=  one subagent transcript\n" +
       "  GET /health                            liveness\n\n" +
@@ -452,6 +584,33 @@ async function check(rulesPath, tapePath) {
 }
 
 // ---------------------------------------------------------------- main
+
+if (argv[0] === "index") {
+  const t0 = Date.now();
+  let last = 0;
+  const built = await buildIndex({
+    onProgress: (done, total, indexed, cached) => {
+      const now = Date.now();
+      if (now - last < 250 && done !== total) return;
+      last = now;
+      process.stderr.write(`\r  ${done}/${total} sessions · ${indexed} indexed · ${cached} cached   `);
+    },
+  });
+  process.stderr.write("\n");
+  if (built.error) {
+    console.error("  " + built.error);
+    process.exit(2);
+  }
+  if (flag("json")) {
+    console.log(JSON.stringify(built.sessions));
+  } else {
+    const ms = Date.now() - t0;
+    console.log(`\n  ${built.sessions.length} sessions · ${built.indexed} indexed · ` +
+      `${built.cached} from cache · ${(ms / 1000).toFixed(1)}s`);
+    console.log(`  cache: ${CACHE_FILE}\n`);
+  }
+  process.exit(0);
+}
 
 if (argv[0] === "check") {
   if (argv.length < 3) {

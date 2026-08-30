@@ -69,6 +69,42 @@ export const subagentUrl = (
   `${HELPER}/subagent?project=${encodeURIComponent(s.project)}` +
   `&session=${encodeURIComponent(s.session)}&agent=${encodeURIComponent(agent)}`;
 
+/** Statistics for one session. Counts, durations, token totals and names from
+ *  a fixed vocabulary — there is no field here that can hold a sentence. */
+export type SessionStats = {
+  project: string;
+  session: string;
+  bytes: number;
+  mtime: number;
+  lines: number;
+  steps: number;
+  conversationSteps: number;
+  turns: number;
+  toolCalls: number;
+  tools: Record<string, number>;
+  toolErrors: Record<string, number>;
+  errors: number;
+  firstT: number;
+  lastT: number;
+  wallMs: number;
+  activeMs: number;
+  idleGaps: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreate: number;
+  peakCtx: number;
+  compactions: number;
+  delegations: number;
+  /** The subagent transcripts beside this session. Never cached: they change
+   *  without the session's own size or mtime moving. */
+  agents: HelperAgent[];
+  models: string[];
+  ctxProfile: number[];
+};
+
+export const overviewUrl = (): string => `${HELPER}/overview`;
+
 export type HelperState = {
   sessions: HelperSession[] | null;
   probing: boolean;
