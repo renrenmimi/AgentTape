@@ -901,8 +901,28 @@ ok(readme.trim().endsWith("© 2026 Weiren Feng. All rights reserved."),
 ok(/never leave (this|your) machine/i.test(readme.slice(0, 1400)),
   "the README states on the first screen that transcripts never leave the machine");
 ok(/roadmap/i.test(readme), "the README has a roadmap");
-for (const item of ["side by side", "assertion", "live recording", "subagents", "OpenAI"]) {
+for (const item of ["live recording", "OpenAI"]) {
   ok(readme.toLowerCase().includes(item.toLowerCase()), "the roadmap names: " + item);
+}
+
+// The limits section is load-bearing: it is the difference between a tool that
+// can be trusted about what it does not do and one that implies it does
+// everything. Each of these is a limit somebody could otherwise be caught by.
+const limits = readme.slice(readme.indexOf("## Limits"), readme.indexOf("## Roadmap"));
+ok(limits.length > 1500, "the README has a limits section of some substance",
+  `${limits.length} chars`);
+for (const [what, re] of [
+  ["search covers summaries, not full text", /summar(y|ies), not full text|not full text/i],
+  ["comparison aligns structurally by a stated rule", /aligns by tool-call sequence/i],
+  ["a nested subagent run shows less than a top-level one", /nested subagent run shows less/i],
+  ["subagent pairing falls back to the clock", /paired by time|falls back to the clock/i],
+  ["the format came from three transcripts on one machine", /three transcripts/i],
+  ["…written by several writer versions", /writer versions/i],
+  ["a redacted tape keeps tool names on purpose", /keeps tool names/i],
+  ["assertions can only be about shape", /only be about shape/i],
+  ["CI does not run the in-page suite", /CI does not run the in-page suite/i],
+]) {
+  ok(re.test(limits), "the limits section states: " + what);
 }
 
 // walk every source file we ship

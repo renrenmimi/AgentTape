@@ -86,9 +86,11 @@ Underneath it runs a second axis in *real* elapsed time, so a 38-minute pause
 in the middle of a session reads as a 38-minute pause instead of being
 flattened into the next tick.
 
-Drag the playhead, or use the keyboard: `←` `→` to step, `Shift` to move ten at
-a time, `Home` / `End` for the ends, `n` / `p` to jump to the next and previous
-failure — or, when a filter is on, the next and previous match.
+Drag the playhead, or use the keyboard. Press <kbd>?</kbd> for the whole list:
+arrows to step, `Shift` for ten at a time, `Home` / `End` for the ends, `n` /
+`p` for the next and previous failure — or match, while a filter is on — `/`
+for the search box, `c` to compare, `a` for assertions, `Esc` to close whatever
+is open.
 
 **A filter bar**, because dragging is not a query. Five thousand turns is too
 many to find anything in by hand. Pick tool names from a menu that lists every
@@ -100,6 +102,11 @@ Search reads the 96-character summaries the index already holds, **never the
 bodies** — reading bodies would pull the transcript back into memory and undo
 the design the rest of this is built on. The control says so, because a search
 that quietly misses matches is worse than one that states what it covers.
+
+Matching entries are marked in the messages panel and matching steps are marked
+on the context chart, so a filter answers "where in the growth did this happen"
+as well as "where on the timeline". The bar also says where the playhead sits
+among the matches, so `n` doing nothing at the last one stops being a mystery.
 
 Non-matching steps are **dimmed, not removed**, so the position and density of
 the run stay honest. Where the timeline is denser than the screen, the dim base
@@ -129,6 +136,29 @@ context fell and nothing in the transcript explains it — it reports the fall a
 declines to explain it. Context is one number per turn, not an inventory, so the
 index cannot prove a particular payload is still present, only that the level
 never fell back. The line says which of those it is doing.
+
+**Delegated work.** When a session hands a job to a subagent with the `Agent`
+tool, the transcript keeps the call and the summary that came back; everything
+the subagent did is in a separate file. `isSidechain` is `false` on every record
+of a main transcript, so nothing in the file tells you work is missing — in the
+largest session this was built against, a quarter of all tool calls were
+invisible. Delegated steps now have their own shape on the rail, the header
+counts them, and the step says in words that the work exists and is not here.
+Drop the `agent-*.jsonl` files alongside the transcript, or open the session
+through the helper, and each delegated run appears nested inside the step that
+started it — its own strip, its step count, its tools and what it cost.
+
+**Comparing two runs.** Load a second tape and find where the two stopped
+agreeing. Alignment is by tool-call sequence and the rule is printed above the
+result; the divergence is marked on both rails, which share one scale so a
+shorter run stops short instead of being stretched to match.
+
+**Assertions.** State what a run was supposed to do — `Grep happens before
+Write`, `context never exceeds 200,000 tokens`, `no tool is called more than
+five times in a row`, `no tool call takes longer than 120 seconds`, `the run
+ends without an error` — and the panel reports each one with the offending step
+linked. Every rule reads the index and none reads a body, so a redacted tape
+can be asserted against exactly as well as the transcript it came from.
 
 **Tool call detail** — the input, the matched result, whether it errored, and
 the wall-clock time between the two.
@@ -185,7 +215,9 @@ checker that needs one of my sessions is a checker nobody else can run. It
 covers every documented record type, unknown types degrading to a generic step,
 missing `usage`, malformed JSON mid-file, byte offsets across multi-byte
 characters, filtering in each dimension and in combination, the step delta, the
-context-jump trace, and the twelve-character redaction test. It also asserts the
+context-jump trace, delegation detection and subagent pairing, run comparison
+including its degenerate cases, every assertion rule in both directions, and the
+twelve-character redaction test. It also asserts the
 repository's own guarantees: the ignore rules, the absence of any remote host,
 that nothing lands on `window` outside the self-test flag, that the search path
 never reaches for a body, and that the helper only points at directories this
@@ -194,10 +226,12 @@ repository can produce.
 `?selftest=1` asserts against the live DOM: the timeline paints one tick per
 step, filtering dims that tick rather than deleting it, keyboard navigation
 moves the playhead, `n` steps to the next match while a filter is on, a
-playhead that stops matching is not moved, the messages panel stays virtualised
-on a six-thousand-step tape, failure is stated in words as well as in colour,
-every control is keyboard-reachable and named, and the stylesheet honours
-`prefers-reduced-motion`.
+playhead that stops matching is not moved, a delegated step says its work is
+elsewhere, the comparison states its alignment rule, an assertion links its
+offending step, `?` lists the shortcuts and Tab stays inside a dialog, the
+messages panel stays virtualised on a six-thousand-step tape, failure is stated
+in words as well as in colour, every control is keyboard-reachable and named,
+and the stylesheet honours `prefers-reduced-motion`.
 
 **CI runs `verify.mjs` and a production build. It does not run the in-page
 suite** — that needs a browser driving a running server. A green tick on a pull
@@ -264,29 +298,97 @@ consecutive lines sharing one `message.id`.
 See `docs/format-notes.md` for the rest of what the format actually looks like,
 including the parts of it that are version-dependent.
 
+## Limits
+
+A tool that states its limits is easier to trust than one that implies it has
+none. These are the ones worth knowing before you rely on an answer.
+
+**Search matches summaries, not full text.** The index keeps a 96-character
+summary of each step and that is what search reads. A word that appears only in
+the ninetieth line of a tool result will not be found. This is deliberate:
+searching bodies means holding the transcript in memory, which is the thing the
+whole design avoids. The control says so on its face rather than in this file.
+
+**Comparison aligns by tool-call sequence, and positionally.** Two runs are
+reduced to the tools they called and those lists are compared; message text is
+never read, because two runs of the same task differ in almost every word and a
+textual comparison would answer "step 2" every time. The cost is that one extra
+call early in a run shifts everything after it. The panel detects the common
+shapes — a swapped call, an insertion of one or two — and says which it found,
+but past about eight calls of drift it stops trying and tells you so. Only the
+first divergence is reported; there may be later ones.
+
+**A nested subagent run shows less than a top-level one.** You get its shape,
+its step count, its tools, its failures, its tokens and its wall clock. You do
+not get a playhead of its own, a messages array, body text, filtering, or the
+runs it delegated in turn. Open the file as a transcript in its own right for
+those. Two playheads on one screen is a different design and this round did not
+attempt it.
+
+**A subagent file without its sidecar is paired by time.** The `.meta.json`
+beside each run carries the id of the call that started it and is exact. Nothing
+inside a subagent transcript points back at its parent, so a drag-and-drop
+without the sidecars falls back to the clock: a subagent ran between its call
+and that call's result. That identified all sixteen runs correctly in the
+session this was built against, with no ambiguity — but two delegations running
+in parallel would produce overlapping windows, and there the pairing declines to
+guess and leaves the file unattached rather than hanging it on the wrong call.
+
+**The format came from three transcripts.** Written by four writer versions, on
+one machine, by one person. `docs/format-notes.md` records exactly what was
+observed and what was not — `pr-link` and `atis-latch` are documented record
+types that never appeared; `usage.output_tokens_details` appeared in one writer
+version and none of the others. Somebody else's file will carry shapes this
+parser has never seen. It is built to bend rather than break: every field is
+optional, an unrecognised record type becomes a generic step, a malformed line
+is skipped rather than aborting the file. But "it does not crash" is not the
+same as "it understood", and a session from a much newer or much older Claude
+Code may be read less well than these three were.
+
+**A redacted tape keeps tool names.** That is on purpose — a run whose tool
+names were stripped tells you nothing — but it means that if a model mentioned
+a tool by name in its reasoning, that name survives into the export. The
+twelve-character leak test in `verify.mjs` measures this rather than hiding it:
+on the largest fixture, every surviving run of twelve characters is a tool name,
+a JSON seam, or the export's own documentation prose, and none is in the
+structural residue.
+
+**Assertions can only be about shape.** Rules read tool names, timings, token
+counts and error flags. There is no rule that can be about what was *said*,
+because nothing in the checker may read a body. "Did it search before writing"
+is answerable; "did it explain itself" is not.
+
+**Wall-clock duration is usually not what you want.** Sessions are resumed for
+days; one probe fixture spans 213 hours of wall-clock and holds about thirteen
+hours of work. Active duration, which drops every gap over two minutes, sits
+next to it for that reason.
+
+**CI does not run the in-page suite.** `node verify.mjs` and a production build
+run on every push; the browser assertions at `?selftest=1` need a browser
+driving a running server and are run by hand before each merge. A green tick
+does not cover them.
+
 ## Roadmap
 
 Out of scope, in rough order of how much I want them. Each line says why it is
 still out, because "not yet" without a reason is just a wish.
 
-- **Reading the `subagents/` directory.** *Deferred, and it is a known blind
-  spot rather than a missing feature.* Subagent transcripts live beside the
-  session at `<sessionId>/subagents/agent-<id>.jsonl`, and `isSidechain` is
-  `false` on **every** record of a main-session file — all 8,733 that carried
-  the field across the three probe fixtures. So a main file cannot even tell
-  you that work happened elsewhere: an `Agent` call is a call and a result with
-  a summary, and everything the subagent actually did is invisible. Sixteen
-  such calls appear in the large fixture. Fixing it means loading several files
-  as one run and deciding how a subagent's steps sit on a single playhead,
-  which is a data-model change, not an addition.
-- **Comparing two runs side by side** — the same task, two models or two
-  prompts, with the diverging step marked. *Deferred because the interesting
-  half is the alignment: two runs of the same task do not share step indices,
-  and a diff that lines them up by position would be worse than none.*
-- **Assertions over tapes** — "this run must not exceed 200k context", "this
-  tool must never be called twice in a row" — turning a tape into a regression
-  test. *Deferred because it wants a stable tape format to assert against, and
-  `agenttape/1` has not been used by anyone but me yet.*
+- **A subagent run with a playhead of its own.** *The blind spot is closed —
+  delegated runs are detected, loaded and nested — but a nested run is a
+  summary, not a workbench.* Giving it a playhead means either a second one on
+  the same screen or a way to descend into it and come back, and both are a
+  navigation design rather than an addition.
+- **Realigning a comparison after the divergence.** *The rule reports the first
+  place two runs part and detects a swap or a short insertion; past that it
+  stops.* A proper longest-common-subsequence alignment would keep the two runs
+  side by side all the way down, at the cost of a rule that is much harder to
+  put in one sentence above the result — and a rule the reader cannot state is
+  worse than a limited one they can.
+- **Assertions that run outside the browser.** *The rules are already plain
+  data and the checker is a module with no DOM in it,* so `node` could run a
+  rule set against a tape in CI. What is missing is a file format for a rule
+  set and a decision about where it lives, and inventing one before anybody has
+  written rules in anger is how you get the wrong one.
 - **Live recording while an agent runs**, rather than after the fact.
   *Deferred because tailing a file that is being appended to means handling
   half-written lines and a moving end, and the whole value of this tool so far
@@ -303,7 +405,8 @@ still out, because "not yet" without a reason is just a wish.
 
 ```
 app/       the Next.js app — no UI library, no CSS framework, no state library
-lib/       parser, tape container, redactor, summary, filter, step delta
+lib/       parser, tape container, redactor, summary, filter, step delta,
+           subagents, comparison, assertions
 bin/       the local helper
 docs/      what the transcript format actually is
 scripts/   builds the demo tape
