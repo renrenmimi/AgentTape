@@ -17,6 +17,7 @@ import {
   EMPTY_FILTER, applyFilter, buildFilterIndex, entryMask, isActive, matchOrdinal, seek,
   type Filter,
 } from "@/lib/filter";
+import { DEFAULT_RULES, checkAll, tally, type Rule } from "@/lib/assert";
 import {
   agentIdFromName, delegationSummary, findDelegations, pairBySidecar, pairByTime, summariseRun,
   type Delegation, type SubRun,
@@ -31,6 +32,7 @@ import ContextChart from "./context-chart";
 import MessagesPanel from "./messages-panel";
 import StepDetail from "./step-detail";
 import Compare from "./compare";
+import Assertions from "./assertions";
 import FilterBar from "./filter-bar";
 import { runSelfTest } from "./selftest";
 
@@ -49,6 +51,8 @@ export default function Page() {
   const [subLoading, setSubLoading] = useState(-1);
   const [subError, setSubError] = useState("");
   const [comparing, setComparing] = useState(false);
+  const [asserting, setAsserting] = useState(false);
+  const [rules, setRules] = useState<Rule[]>(DEFAULT_RULES);
   const [progress, setProgress] = useState<{ pct: number; lines: number; label: string } | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -78,6 +82,11 @@ export default function Page() {
   // What became of the payload the biggest jump added. Derived from the index
   // over the whole tape, not the filtered view, so hiding bookkeeping records
   // cannot change the answer.
+  const assertions = useMemo(
+    () => (tape ? checkAll(tape.steps, rules, pairs) : []),
+    [tape, rules, pairs],
+  );
+
   const jumpTrace = useMemo(
     () => (tape && summary ? traceJump(tape.steps, summary.jumpAt, summary.jumpBy) : null),
     [tape, summary],
@@ -506,6 +515,10 @@ export default function Page() {
       seekNext,
       setComparing,
       get comparing() { return comparing; },
+      setAsserting,
+      get assertions() { return assertions; },
+      get rules() { return rules; },
+      setRules,
       get delegations() { return delegations; },
       get origin() { return origin; },
       loadSubagent,
@@ -515,7 +528,7 @@ export default function Page() {
     if (!selftest) return;
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
-  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing]);
+  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules]);
 
   // ---- render -------------------------------------------------------------
 
@@ -537,6 +550,18 @@ export default function Page() {
 
   return (
     <main className="tape">
+      {asserting && (
+        <Assertions
+          steps={tape.steps}
+          tools={filterIndex ? filterIndex.tools.map((t) => t.name) : []}
+          rules={rules}
+          onRules={setRules}
+          pairs={pairs}
+          shownIndex={shownIndex}
+          onGo={(i) => { goToGlobal(i); setAsserting(false); }}
+          onClose={() => setAsserting(false)}
+        />
+      )}
       {comparing && (
         <Compare
           a={tape}
@@ -553,6 +578,8 @@ export default function Page() {
         onExport={onExport}
         onClose={reset}
         onCompare={() => setComparing(true)}
+        assertions={tally(assertions)}
+        onAssert={() => setAsserting(true)}
         exporting={exporting}
       />
 

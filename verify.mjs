@@ -26,6 +26,7 @@ import {
   isDelegation, pairBySidecar, pairByTime, summariseRun,
 } from "./lib/subagents.ts";
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
+import { DEFAULT_RULES, checkAll, checkRule, ruleLabel, tally } from "./lib/assert.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -552,6 +553,115 @@ section("delegated work");
   ok(sum.toolCalls === 3, "…and adds up the work that was invisible", String(sum.toolCalls));
   ok(delegationSummary(dels).loaded === 0 && delegationSummary(dels).total === 3,
     "with nothing loaded it still reports that work exists elsewhere");
+}
+
+// ---------------------------------------------------------------- assertions
+
+section("assertions");
+{
+  // A synthetic run per rule, so each check is exercised both ways.
+  const mk = (spec) => {
+    const at = (n) => new Date(Date.parse("2026-05-05T09:00:00Z") + n * 1000).toISOString();
+    const L = [];
+    let t = 0;
+    spec.forEach(([name, opts], i) => {
+      const o = opts ?? {};
+      L.push(JSON.stringify({ type: "assistant", sessionId: "as", uuid: "a" + i, timestamp: at(t),
+        message: { role: "assistant", id: "m" + i, model: "claude-opus-5",
+          usage: { input_tokens: 10, output_tokens: 5,
+            cache_read_input_tokens: o.ctx ?? 1000, cache_creation_input_tokens: 0 },
+          content: [{ type: "tool_use", id: "t" + i, name, input: {} }] } }));
+      t += o.secs ?? 1;
+      if (o.dangling) return;
+      L.push(JSON.stringify({ type: "user", sessionId: "as", uuid: "r" + i, timestamp: at(t),
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t" + i,
+          is_error: !!o.err, content: "out" }] } }));
+      t += 1;
+    });
+    const tape = loadJsonlString(L.join("\n"), "assert");
+    return { tape, pairs: pairTools(tape.steps) };
+  };
+  const run = (spec, rule) => {
+    const { tape, pairs } = mk(spec);
+    return checkRule(tape.steps, rule, pairs);
+  };
+
+  ok(DEFAULT_RULES.length >= 4, "there is a default rule set", String(DEFAULT_RULES.length));
+  ok(DEFAULT_RULES.every((r) => typeof ruleLabel(r) === "string" && ruleLabel(r).length > 10),
+    "every rule reads as a sentence");
+
+  // search happens before write — the rule this feature exists for
+  const before = { kind: "before", first: "Grep", then: "Write" };
+  ok(run([["Grep"], ["Write"]], before).pass, "a search before a write holds");
+  ok(run([["Grep"], ["Write"], ["Write"]], before).pass, "…and covers every later write");
+  const broke = run([["Write"], ["Grep"]], before);
+  ok(!broke.pass, "a write with no search before it fails");
+  ok(broke.at === 0, "…and names the offending step", String(broke.at));
+  ok(/no Grep before it/.test(broke.detail), "…in words", broke.detail);
+  const novac = run([["Grep"], ["Read"]], before);
+  ok(novac.pass && novac.vacuous, "a run that never writes is not tested by the rule");
+  ok(/never called/.test(novac.detail), "…and says so rather than claiming a pass");
+
+  // no tool more than N times in a row
+  const rep = { kind: "max-repeats", n: 2 };
+  ok(run([["Bash"], ["Bash"], ["Read"]], rep).pass, "two in a row is within a limit of two");
+  const tooMany = run([["Bash"], ["Bash"], ["Bash"]], rep);
+  ok(!tooMany.pass, "three in a row is not");
+  ok(/3 times in a row/.test(tooMany.detail), "…and counts them", tooMany.detail);
+  ok(run([["Bash"], ["Read"], ["Bash"]], rep).pass, "the run resets when another tool intervenes");
+  const scoped = { kind: "max-repeats", n: 1, tool: "Read" };
+  ok(run([["Bash"], ["Bash"], ["Read"]], scoped).pass, "a scoped rule ignores other tools");
+  ok(!run([["Read"], ["Read"]], scoped).pass, "…and still catches its own");
+  ok(run([["Bash"]], scoped).vacuous, "…and is vacuous when its tool never ran");
+
+  // context ceiling
+  const ceil = { kind: "max-context", n: 5000 };
+  ok(run([["Bash", { ctx: 4000 }]], ceil).pass, "context under the ceiling holds");
+  const over = run([["Bash", { ctx: 4000 }], ["Bash", { ctx: 9000 }]], ceil);
+  ok(!over.pass && over.at === 2, "context over it fails at the step that reached the peak",
+    `at ${over.at}`);
+  ok(/9,010 tokens/.test(over.detail), "…and reports the peak", over.detail);
+
+  // slow tool call
+  const slow = { kind: "max-tool-seconds", n: 10 };
+  ok(run([["Bash", { secs: 3 }]], slow).pass, "a quick call holds");
+  const late = run([["Bash", { secs: 45 }]], slow);
+  ok(!late.pass, "a slow one does not");
+  ok(/45.0 seconds/.test(late.detail), "…and reports how slow", late.detail);
+
+  // ends clean
+  const clean = { kind: "ends-clean" };
+  ok(run([["Bash"], ["Read"]], clean).pass, "a run with no failures ends clean");
+  const recovered = run([["Bash", { err: true }], ["Read"]], clean);
+  ok(recovered.pass, "a run that failed and recovered still ends clean");
+  ok(/recovered/.test(recovered.detail), "…and the recovery is reported rather than hidden",
+    recovered.detail);
+  const ended = run([["Read"], ["Bash", { err: true }]], clean);
+  ok(!ended.pass, "a run whose last step failed does not");
+  const hung = run([["Read"], ["Bash", { dangling: true }]], clean);
+  ok(!hung.pass, "…nor one with a tool that never returned");
+  ok(/never returned/.test(hung.detail), "…which is named as a different fault", hung.detail);
+
+  // a redacted tape asserts exactly as well as the transcript it came from
+  {
+    const { tape, pairs } = mk([["Grep"], ["Write"], ["Bash", { ctx: 9000 }]]);
+    const rules = [before, ceil, clean, { kind: "max-repeats", n: 2 }];
+    const direct = checkAll(tape.steps, rules, pairs);
+    const scrubbedTape = tapeFromFile(JSON.parse(serializeTape(redactTape(tape))));
+    const viaTape = checkAll(scrubbedTape.steps, rules, pairTools(scrubbedTape.steps));
+    ok(direct.map((r) => r.pass).join() === viaTape.map((r) => r.pass).join(),
+      "every rule gives the same answer on a redacted tape",
+      `${direct.map((r) => r.pass)} vs ${viaTape.map((r) => r.pass)}`);
+  }
+
+  const t = tally(checkAll(mk([["Grep"], ["Write"]]).tape.steps, DEFAULT_RULES,
+    mk([["Grep"], ["Write"]]).pairs));
+  ok(t.pass + t.fail === DEFAULT_RULES.length, "the tally adds up");
+
+  // No rule may read a body: a redacted tape has none, and must still work.
+  const assertSrc = readFileSync(join(root, "lib/assert.ts"), "utf8")
+    .replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  ok(!/\bbody\b|\.preview\b/.test(assertSrc), "no rule reaches for a body or a preview");
 }
 
 // ---------------------------------------------------------------- comparison

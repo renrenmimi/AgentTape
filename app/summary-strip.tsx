@@ -20,6 +20,9 @@ type Props = {
   onExport: () => void;
   onClose: () => void;
   onCompare: () => void;
+  /** How many stated expectations this run holds. */
+  assertions: { pass: number; fail: number; vacuous: number };
+  onAssert: () => void;
   exporting: boolean;
 };
 
@@ -35,7 +38,9 @@ function Stat({ k, v, sub, risk }: { k: string; v: string; sub?: string; risk?: 
   );
 }
 
-export default function SummaryStrip({ tape, summary, delegations, onExport, onClose, onCompare, exporting }: Props) {
+export default function SummaryStrip({
+  tape, summary, delegations, assertions, onExport, onClose, onCompare, onAssert, exporting,
+}: Props) {
   const { theme, toggleTheme } = useTheme();
   const s = summary;
 
@@ -104,6 +109,20 @@ export default function SummaryStrip({ tape, summary, delegations, onExport, onC
 
       <div className="strip-actions">
         {tape.meta.redacted && <span className="d-kind">redacted tape</span>}
+        <button
+          type="button"
+          className={"btn btn-sm" + (assertions.fail > 0 ? " btn-fail" : "")}
+          onClick={onAssert}
+          title={
+            assertions.fail
+              ? `${assertions.fail} stated expectation${assertions.fail === 1 ? "" : "s"} did not hold`
+              : "Every stated expectation holds"
+          }
+        >
+          {assertions.fail > 0
+            ? `${assertions.fail} assertion${assertions.fail === 1 ? "" : "s"} failed`
+            : `${assertions.pass} assertions hold`}
+        </button>
         <button type="button" className="btn btn-sm" onClick={onCompare}>
           Compare
         </button>
