@@ -25,6 +25,7 @@ import {
   DELEGATION_TOOLS, agentIdFromName, delegationSummary, findDelegations,
   isDelegation, pairBySidecar, pairByTime, summariseRun,
 } from "./lib/subagents.ts";
+import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -553,6 +554,115 @@ section("delegated work");
     "with nothing loaded it still reports that work exists elsewhere");
 }
 
+// ---------------------------------------------------------------- comparison
+
+section("comparing two runs");
+{
+  // Spines are built from tool names alone. These fixtures give every run
+  // completely different prose, so a textual comparison would call them
+  // different immediately — which is the failure mode the rule avoids.
+  const runOf = (tools, prose) => {
+    const at = (n) => new Date(Date.parse("2026-04-04T09:00:00Z") + n * 1000).toISOString();
+    const L = [JSON.stringify({ type: "user", sessionId: "c", uuid: "u0", timestamp: at(0),
+      message: { role: "user", content: [{ type: "text", text: prose }] } })];
+    tools.forEach((name, i) => {
+      L.push(JSON.stringify({ type: "assistant", sessionId: "c", uuid: "a" + i, timestamp: at(i * 10 + 1),
+        message: { role: "assistant", id: "m" + i, model: "claude-opus-5",
+          usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 100 * i, cache_creation_input_tokens: 0 },
+          content: [{ type: "tool_use", id: "t" + i, name, input: { note: prose + i } }] } }));
+      L.push(JSON.stringify({ type: "user", sessionId: "c", uuid: "r" + i, timestamp: at(i * 10 + 5),
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t" + i, content: prose + " out " + i }] } }));
+    });
+    return loadJsonlString(L.join("\n"), "run");
+  };
+
+  const A = runOf(["Read", "Bash", "Edit", "Bash"], "the quick brown fox jumps");
+  const same = runOf(["Read", "Bash", "Edit", "Bash"], "a completely different sentence entirely");
+  ok(buildSpine(A.steps).map((e) => e.tool).join(",") === "Read,Bash,Edit,Bash",
+    "the spine is the tools, in order");
+  ok(buildSpine(A.steps).length === 4, "…and nothing else");
+
+  const ident = compareSpines(buildSpine(A.steps), buildSpine(same.steps));
+  ok(ident.verdict === "identical",
+    "two runs with the same tools and totally different words are identical to this rule");
+  ok(ident.agreed === 4 && ident.at === -1, "…with nothing to mark");
+  ok(/does not read what they said/.test(verdictLine(ident)), "…and the verdict says why");
+
+  const forked = runOf(["Read", "Bash", "Write", "Write"], "third run");
+  const d = compareSpines(buildSpine(A.steps), buildSpine(forked.steps));
+  ok(d.verdict === "diverged", "a different tool is a divergence");
+  ok(d.at === 2 && d.agreed === 2, "…found at the first position that differs", `at ${d.at}`);
+  ok(d.a.tool === "Edit" && d.b.tool === "Write", "…and both sides are reported",
+    `${d.a?.tool} vs ${d.b?.tool}`);
+  ok(d.realignOffset === -1, "a genuine fork does not realign");
+  ok(d.realignSide === "", "…and names no side");
+  ok(/a different path rather than a shifted one/.test(realignLine(d)),
+    "…and says that everything after is a different path, not a shifted one");
+
+  // A substitution: the same call in the same place, a different tool for it,
+  // and the rest carrying on in step. Reporting this as a fork was wrong and
+  // alarming, so offset zero is checked before any shift.
+  const swapped = runOf(["Read", "Bash", "Write", "Bash"], "swap run");
+  const sub = compareSpines(buildSpine(A.steps), buildSpine(swapped.steps));
+  ok(sub.verdict === "diverged" && sub.at === 2, "a swapped tool is a divergence at that call");
+  ok(sub.realignOffset === 0 && sub.realignSide === "",
+    "…recognised as a substitution, not a shift", `${sub.realignOffset}/${sub.realignSide}`);
+  ok(/swapped a single step rather than forking/.test(realignLine(sub)),
+    "…and described as one swapped step");
+  ok(/there may be later ones/.test(realignLine(sub)),
+    "…while admitting only the first divergence is reported");
+
+  // An insertion: B does one extra call, then carries on identically.
+  const inserted = runOf(["Read", "Bash", "Grep", "Edit", "Bash"], "fourth run");
+  const ins = compareSpines(buildSpine(A.steps), buildSpine(inserted.steps));
+  ok(ins.verdict === "diverged", "an inserted call still reads as a divergence");
+  ok(ins.at === 2, "…at the insertion point");
+  ok(ins.realignOffset === 1 && ins.realignSide === "b",
+    "…but the runs are seen to line up again one call later",
+    `${ins.realignSide} +${ins.realignOffset}`);
+  ok(/insertion, not a fork/.test(realignLine(ins)), "…and that is stated rather than implied");
+
+  // One run stops early.
+  const short = runOf(["Read", "Bash"], "fifth run");
+  const ended = compareSpines(buildSpine(A.steps), buildSpine(short.steps));
+  ok(ended.verdict === "b-ended", "a run that stops first is named", ended.verdict);
+  ok(ended.agreed === 2 && ended.b === null, "…and its side of the divergence is empty");
+  ok(/run B stopped/.test(verdictLine(ended)), "…in words");
+  const ended2 = compareSpines(buildSpine(short.steps), buildSpine(A.steps));
+  ok(ended2.verdict === "a-ended", "…and the other way round");
+
+  // A swap on the last call in both runs: there is nothing after it to line up.
+  const lastSwapA = runOf(["Read", "Edit"], "ninth");
+  const lastSwapB = runOf(["Read", "Write"], "tenth");
+  const tail0 = compareSpines(buildSpine(lastSwapA.steps), buildSpine(lastSwapB.steps));
+  ok(tail0.realignOffset === 0, "a swap on the final call is still a substitution");
+  ok(/last tool call in both runs/.test(realignLine(tail0)),
+    "…and says there is nothing after it, rather than claiming a realignment",
+    realignLine(tail0));
+
+  // Degenerate: a run with no tool calls at all.
+  const quiet = runOf([], "sixth run");
+  const none = compareSpines(buildSpine(A.steps), buildSpine(quiet.steps));
+  ok(none.verdict === "no-spine", "a run that never called a tool cannot be aligned");
+  ok(/cannot be aligned/.test(verdictLine(none)), "…and the UI is told to say exactly that");
+  ok(realignLine(none) === "", "…with no caveat about realignment");
+
+  // Very different lengths must not throw or claim a false divergence.
+  const long = runOf(Array.from({ length: 200 }, (_, i) => (i % 2 ? "Bash" : "Read")), "seventh");
+  const tiny = runOf(["Read"], "eighth");
+  const lop = compareSpines(buildSpine(long.steps), buildSpine(tiny.steps));
+  ok(lop.verdict === "b-ended" && lop.agreed === 1,
+    "a 200-call run against a 1-call run agrees for one call and says the short one ended",
+    `${lop.verdict} after ${lop.agreed}`);
+  ok(lop.lenA === 200 && lop.lenB === 1, "…and both lengths are reported");
+
+  // The comparison must never read a body.
+  const cmpSrc = readFileSync(join(root, "lib/compare.ts"), "utf8");
+  ok(!/\bbody\b/.test(cmpSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")),
+    "the comparison never reaches for a body");
+  ok(!/\.preview\b/.test(cmpSrc), "…and does not compare previews either");
+}
+
 // ---------------------------------------------------------------- jump trace
 
 section("context jump attribution");
@@ -737,14 +847,22 @@ ok(!/@v[1-4]\b/.test(ci), "no CI action is pinned to a deprecated major version"
   (ci.match(/uses: \S+/g) ?? []).join(" "));
 
 // The helper probe must not fire on every load: a refused connection is logged
-// in red by the network layer, where no catch can reach it.
-const emptySrc = read("app/empty-state.tsx");
-const probeGuard = emptySrc.indexOf("helperSeenBefore()");
-const probeCall = emptySrc.indexOf("return probe();");
+// in red by the network layer, where no catch can reach it. The rule lives in
+// one module now that two panels use it, so it is checked there.
+const helperSrc = read("app/helper.ts");
+const probeGuard = helperSrc.indexOf("helperSeenBefore()) return");
+const probeCall = helperSrc.indexOf("probe();", probeGuard);
 ok(probeGuard > 0 && probeCall > probeGuard,
   "the helper is only probed unasked once it has answered here before");
+const emptySrc = read("app/empty-state.tsx");
 ok(/Look for it|Look again/.test(emptySrc),
   "…and there is a control to look for it the first time");
+ok(/Look for it|Look again/.test(read("app/compare.tsx")),
+  "…on the comparison panel too");
+// One implementation, so the two panels cannot drift apart on it.
+const probeImpls = [emptySrc, read("app/compare.tsx")]
+  .filter((src) => /fetch\(\s*HELPER/.test(src)).length;
+ok(probeImpls === 0, "neither panel probes the helper itself", String(probeImpls));
 
 // nothing on window unless the flag is set
 const page = read("app/page.tsx");

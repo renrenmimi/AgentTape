@@ -28,6 +28,8 @@ type Api = {
   mask: Uint8Array;
   seekNext: (dir: 1 | -1) => void;
   delegations: { step: number; run: unknown }[];
+  setComparing: (b: boolean) => void;
+  comparing: boolean;
 };
 
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
@@ -234,6 +236,53 @@ export async function runSelfTest(): Promise<void> {
 
     await a.onDemo();
     await settle(6);
+  }
+
+  // ---- comparing two runs -------------------------------------------------
+  {
+    api().setComparing(true);
+    await settle(4);
+    const panel = document.querySelector(".cmp");
+    ok(!!panel, "the compare panel opens");
+    ok(panel?.getAttribute("role") === "dialog" && panel?.getAttribute("aria-modal") === "true",
+      "…as a dialog");
+
+    // Compare the demo against itself: same tools, same order, and the rule
+    // must call that identical even though every word is the same too.
+    const useDemo = document.querySelector<HTMLElement>(".cmp .drop-actions button:nth-child(2)");
+    ok(!!useDemo && /demo/i.test(useDemo.textContent ?? ""), "…with a way to load a second run",
+      useDemo?.textContent ?? "missing");
+    useDemo?.click();
+    await settle(8);
+
+    const rule = document.querySelector(".cmp-rule-tag");
+    ok(!!rule && /tool-call sequence/.test(rule.textContent ?? ""),
+      "the alignment rule is stated on screen", rule?.textContent ?? "missing");
+    const ruleBody = (document.querySelector(".cmp-rule p")?.textContent ?? "");
+    ok(/never read/i.test(ruleBody), "…including that text is never read");
+    ok(/positional/i.test(ruleBody), "…and that alignment is positional");
+
+    const verdict = (document.querySelector(".cmp-verdict b")?.textContent ?? "").trim();
+    ok(/same .* tools in the same order/.test(verdict),
+      "a run compared with itself is identical", verdict);
+
+    const rails = document.querySelectorAll(".cmp-rail canvas").length;
+    ok(rails === 2, "both runs get a rail", String(rails));
+    const scaleNote = document.querySelector(".cmp-scale-note")?.textContent ?? "";
+    ok(/share one scale/.test(scaleNote), "…on one shared scale", scaleNote.slice(0, 50));
+
+    const rows = [...document.querySelectorAll(".cmp-table dt")].map((e) => (e.textContent ?? "").trim());
+    ok(rows.includes("tool calls") && rows.includes("errors") && rows.includes("peak context"),
+      "the summary table carries both runs and the delta", rows.join(","));
+
+    // Identical runs have nothing to mark, and must not invent a divergence.
+    ok(!document.querySelector(".cmp-at"),
+      "no divergence is shown when the runs never diverged");
+
+    document.querySelector<HTMLElement>(".cmp-head .btn")?.click();
+    await settle(4);
+    ok(!document.querySelector(".cmp"), "the panel closes");
+    ok(!!document.querySelector(".track-hit"), "…and leaves the workbench as it was");
   }
 
   // ---- the context jump is attributed, not just marked --------------------

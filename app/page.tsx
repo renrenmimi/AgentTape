@@ -20,12 +20,14 @@ import {
 } from "@/lib/subagents";
 import type { Tape } from "@/lib/format";
 import { KIND_LABEL, KindGlyph, FailGlyph, DelegateGlyph } from "./glyphs";
-import EmptyState, { HELPER, type HelperAgent, type HelperSession } from "./empty-state";
+import EmptyState from "./empty-state";
+import { fileUrl, subagentUrl, type HelperAgent, type HelperSession } from "./helper";
 import SummaryStrip from "./summary-strip";
 import Timeline from "./timeline";
 import ContextChart from "./context-chart";
 import MessagesPanel from "./messages-panel";
 import StepDetail from "./step-detail";
+import Compare from "./compare";
 import FilterBar from "./filter-bar";
 import { runSelfTest } from "./selftest";
 
@@ -43,6 +45,7 @@ export default function Page() {
   const [origin, setOrigin] = useState<{ project: string; session: string; agents: HelperAgent[] } | null>(null);
   const [subLoading, setSubLoading] = useState(-1);
   const [subError, setSubError] = useState("");
+  const [comparing, setComparing] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; lines: number; label: string } | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -255,6 +258,51 @@ export default function Page() {
     [],
   );
 
+  /**
+   * Read a second run without disturbing the one on screen. The comparison
+   * holds it itself, so nothing here calls adopt().
+   */
+  const readTape = useCallback(async (blob: Blob, label: string): Promise<Tape | null> => {
+    const name = label.toLowerCase();
+    if (!name.endsWith(".jsonl")) {
+      try {
+        const parsed = JSON.parse(await blob.text()) as TapeFile;
+        const t = tapeFromFile(parsed);
+        t.meta.label = t.meta.label || label;
+        return t;
+      } catch {
+        /* not a tape: fall through and try it as a transcript */
+      }
+    }
+    try {
+      return await loadJsonlBlob(blob, label);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const compareFromFile = useCallback(
+    (f: File) => readTape(f, f.name),
+    [readTape],
+  );
+
+  const compareFromHelper = useCallback(
+    async (session: HelperSession): Promise<Tape | null> => {
+      const res = await fetch(fileUrl(session));
+      if (!res.ok) throw new Error(`helper returned ${res.status}`);
+      return readTape(await res.blob(), session.session.slice(0, 8) + ".jsonl");
+    },
+    [readTape],
+  );
+
+  const compareFromDemo = useCallback(async (): Promise<Tape | null> => {
+    const res = await fetch("./demo.tape.json");
+    if (!res.ok) throw new Error(`demo tape returned ${res.status}`);
+    const t = tapeFromFile(JSON.parse(await res.text()) as TapeFile);
+    t.meta.label = t.meta.label || "demo";
+    return t;
+  }, []);
+
   const onFiles = useCallback(
     async (files: File[]) => {
       setError("");
@@ -315,9 +363,7 @@ export default function Page() {
       setError("");
       setProgress({ pct: 0, lines: 0, label });
       try {
-        const url = `${HELPER}/file?project=${encodeURIComponent(session.project)}` +
-          `&session=${encodeURIComponent(session.session)}`;
-        const res = await fetch(url);
+        const res = await fetch(fileUrl(session));
         if (!res.ok) throw new Error(`helper returned ${res.status}`);
         const t = await loadBlob(await res.blob(), label, true);
         if (t) {
@@ -340,9 +386,7 @@ export default function Page() {
       setSubLoading(d.step);
       setSubError("");
       try {
-        const url = `${HELPER}/subagent?project=${encodeURIComponent(origin.project)}` +
-          `&session=${encodeURIComponent(origin.session)}&agent=${encodeURIComponent(agent.id)}`;
-        const res = await fetch(url);
+        const res = await fetch(subagentUrl(origin, agent.id));
         if (!res.ok) throw new Error(`helper returned ${res.status}`);
         const ok = await attachSubagent(await res.blob(), agent.id, agent.toolUseId, delegations);
         if (!ok) setSubError("That file could not be matched to this call.");
@@ -446,6 +490,8 @@ export default function Page() {
       get matches() { return matches; },
       get mask() { return mask; },
       seekNext,
+      setComparing,
+      get comparing() { return comparing; },
       get delegations() { return delegations; },
       get origin() { return origin; },
       loadSubagent,
@@ -455,7 +501,7 @@ export default function Page() {
     if (!selftest) return;
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
-  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent]);
+  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing]);
 
   // ---- render -------------------------------------------------------------
 
@@ -477,12 +523,22 @@ export default function Page() {
 
   return (
     <main className="tape">
+      {comparing && (
+        <Compare
+          a={tape}
+          onClose={() => setComparing(false)}
+          onLoadB={compareFromFile}
+          onLoadBFromHelper={compareFromHelper}
+          onLoadDemo={compareFromDemo}
+        />
+      )}
       <SummaryStrip
         tape={tape}
         summary={summary}
         delegations={delegationSummary(delegations)}
         onExport={onExport}
         onClose={reset}
+        onCompare={() => setComparing(true)}
         exporting={exporting}
       />
 

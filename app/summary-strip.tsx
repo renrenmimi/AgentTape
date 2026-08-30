@@ -19,6 +19,7 @@ type Props = {
   delegations: { total: number; loaded: number; steps: number; toolCalls: number };
   onExport: () => void;
   onClose: () => void;
+  onCompare: () => void;
   exporting: boolean;
 };
 
@@ -34,7 +35,7 @@ function Stat({ k, v, sub, risk }: { k: string; v: string; sub?: string; risk?: 
   );
 }
 
-export default function SummaryStrip({ tape, summary, delegations, onExport, onClose, exporting }: Props) {
+export default function SummaryStrip({ tape, summary, delegations, onExport, onClose, onCompare, exporting }: Props) {
   const { theme, toggleTheme } = useTheme();
   const s = summary;
 
@@ -103,6 +104,9 @@ export default function SummaryStrip({ tape, summary, delegations, onExport, onC
 
       <div className="strip-actions">
         {tape.meta.redacted && <span className="d-kind">redacted tape</span>}
+        <button type="button" className="btn btn-sm" onClick={onCompare}>
+          Compare
+        </button>
         <button type="button" className="btn btn-sm" onClick={onExport} disabled={exporting}>
           {exporting ? "Exporting…" : "Export redacted tape"}
         </button>
