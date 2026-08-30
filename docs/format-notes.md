@@ -1,271 +1,301 @@
-# Claude Code transcript format — observed structure
+# The Claude Code transcript format
 
-Findings from a throwaway probe run over three local transcripts on
-2026-08-28. The probe emitted **key names, counts and byte sizes only**; no
-message text, no file paths and no session titles were read into the notes.
-The fixtures themselves are never copied into this repository.
+Claude Code writes every session to disk as newline-delimited JSON. The format
+is not documented anywhere, and this file is an attempt to change that.
 
-| fixture | bytes | lines | longest line | record types | tool calls |
-| --- | --- | --- | --- | --- | --- |
-| A (small) | 217,471 | 70 | 20,177 | 9 | 10 |
-| B (medium) | 5,677,364 | 1,268 | 330,863 | 9 | 296 |
-| C (large) | 80,344,859 | 10,757 | 1,341,227 | 11 | 2,660 |
-
-`agenttape` is designed against what follows, not against any published schema.
-Everything here is descriptive: the writer is free to change it, so the parser
-treats every field as optional and every unrecognised value as data rather than
-as an error.
-
----
-
-## 1. File layout
+Nothing here is authoritative. It is what forty sessions written by twenty-four
+different Claude Code versions on one machine actually contain, checked by
+probing them rather than by reading a specification, because there is no
+specification to read. The writer is free to change any of it. Treat this as
+field notes from someone who had to parse it, and check your own files against
+it before trusting a detail.
 
 ```
 ~/.claude/projects/<project-dir>/<sessionId>.jsonl
 ~/.claude/projects/<project-dir>/<sessionId>/subagents/agent-<id>.jsonl
+~/.claude/projects/<project-dir>/<sessionId>/subagents/agent-<id>.meta.json
 ```
 
-One JSON object per line, newline-delimited, UTF-8. No trailing-comma or
-multi-line objects were seen: every line in all three fixtures parsed
-standalone (`bad_json = 0` in 12,095 lines). The parser still tolerates a
-malformed line by skipping it, because a transcript can be truncated mid-write
-while a session is live.
+`<project-dir>` is the working directory with `/` replaced by `-`, so a session
+in `/Users/you/code/app` lands in `-Users-you-code-app`. That means the
+directory name is a path, and a path is often a name — worth knowing before you
+put one in a screenshot.
 
-Lines are appended in write order, which is **close to but not exactly**
-chronological — see §6.
+---
 
-## 2. Top-level record types
+## Four things that are not what you would guess
 
-Eleven `type` values were observed:
+Each of these broke a design that seemed obvious, and each is cheap to get
+wrong for a long time before you notice.
 
-| type | A | B | C | carries `message` | carries `uuid`/`parentUuid` | carries `timestamp` |
-| --- | --- | --- | --- | --- | --- | --- |
-| `assistant` | 25 | 558 | 4,282 | yes | yes | yes |
-| `user` | 14 | 319 | 2,760 | yes | yes | yes |
-| `attachment` | 5 | 61 | 663 | no | yes | yes |
-| `system` | 1 | 6 | 39 | no | yes | yes |
-| `queue-operation` | 8 | 46 | 259 | no | no | yes |
-| `custom-title` | 5 | 80 | 694 | no | no | no |
-| `ai-title` | 5 | 75 | 688 | no | no | no |
-| `last-prompt` | 6 | 79 | 713 | no | no | no |
-| `mode` | 1 | 44 | 653 | no | no | no |
-| `file-history-snapshot` | — | — | 4 | no | no | no |
-| `file-history-delta` | — | — | 2 | no | no | yes |
+### 1. A line is one content **block**, not one message
 
-**Not observed anywhere:** `pr-link`, `atis-latch`. They may exist in other
-builds; the parser handles them the same way it handles any unknown type.
-
-The last six types are *bookkeeping*: they record editor state, not the
-conversation. In fixture C they are 2,748 of 10,757 lines — 26% of the file.
-Feeding them to the timeline would bury the actual run, so AgentTape classifies
-them as `meta` steps and hides them behind a filter rather than dropping them.
-
-Keys observed per record type:
-
-```
-assistant   type sessionId uuid parentUuid isSidechain userType entrypoint cwd
-            version gitBranch timestamp message requestId effort slug
-            attributionMcpServer attributionMcpTool isApiErrorMessage error
-            apiErrorStatus
-user        …the same identity keys… message origin permissionMode promptId
-            promptSource toolUseResult sourceToolAssistantUUID isMeta
-            isCompactSummary isVisibleInTranscriptOnly toolDenialKind
-            classifierMetaLines
-attachment  …identity keys… attachment
-system      …identity keys… content subtype level hasOutput stopReason
-            toolUseID hookCount hookInfos hookErrors hookAdditionalContext
-            preventedContinuation compactMetadata logicalParentUuid source
-            retryInMs retryAttempt maxRetries error isMeta
-queue-op.   type sessionId timestamp operation content
-custom-title / ai-title / last-prompt / mode
-            type sessionId + one payload key (customTitle | aiTitle |
-            lastPrompt+leafUuid | mode)
-file-history-snapshot   type messageId snapshot isSnapshotUpdate
-file-history-delta      type messageId snapshotMessageId timestamp
-                        trackingPath backup
-```
-
-`sessionId` is **not** universal: `file-history-snapshot` records omit it
-(10,751 of 10,757 lines in fixture C carry it).
-
-## 3. `message`
-
-```
-message.role            "user" | "assistant"
-message.content         string | array of blocks
-message.model           assistant only
-message.id              assistant only — the API message id
-message.type            assistant only, always "message"
-message.stop_reason     tool_use | end_turn | stop_sequence | max_tokens | null
-message.stop_sequence
-message.stop_details    object
-message.usage           assistant only
-message.diagnostics     { cache_miss_reason: { type, cache_missed_input_tokens? } }
-message.container       rare (7 records in B and C combined)
-message.context_management  rare, same records
-```
-
-Models seen: `claude-opus-5`, `claude-fable-5`, and `<synthetic>` — the last
-is what the writer puts on an assistant record that represents a failed API
-call rather than a model response.
-
-### The single most important finding
-
-**One content block per line.** In fixture C, 6,949 of 6,951 array-valued
-`message.content` fields hold exactly one block; the two exceptions are image
-batches (`8` and `3` blocks). Claude Code does not write an API message per
-line — it writes a *block* per line, and consecutive `assistant` records that
-share a `message.id` are one API message.
-
-That inverts the naive design. A step is not "a message"; a step is a line. To
-show the messages array as the API would have seen it, records must be
-**grouped back up** by `message.id`. AgentTape does exactly that: the timeline
-is per block, the messages panel is per group.
-
-A consequence: no assistant record ever mixed text with a tool call, and no
-record ever held two `tool_use` blocks (`multi-tool_use = 0` in all three
-fixtures). Parallel tool calls appear as consecutive lines sharing one
+The natural reading is that each line is an entry in the API `messages` array.
+It is not. Each line is a single *content block*, and an assistant turn that
+thinks, then speaks, then calls a tool is **three lines** carrying the same
 `message.id`.
 
-## 4. Content blocks
+In the largest probe session, 6,949 of 6,951 array-valued `message.content`
+fields hold exactly one block. The two exceptions are batches of images.
 
-| block type | keys | A | B | C |
+To reconstruct what the model was actually sent, group consecutive `assistant`
+records by `message.id`. If you skip that, a viewer will claim three turns where
+the API saw one, and any per-turn token figure will land on the wrong row.
+
+A consequence worth knowing: **no assistant record ever mixed prose with a tool
+call**, and none held two `tool_use` blocks. Parallel tool calls appear as
+consecutive lines sharing one `message.id`.
+
+### 2. `isSidechain` is `false` on every record of a main session
+
+It looks like the field that tells you a record belongs to a subagent. In a
+main-session file it is `false` on **all 8,733 records** that carry it, across
+every fixture checked.
+
+Subagent work is not in the main file at all. It is in a sibling directory, and
+the main file keeps only the `Agent` call and the summary that came back. A
+reader of one file cannot tell that anything is missing. In one session this
+hides 929 of 3,589 tool calls — a quarter of the run.
+
+### 3. Timestamps run backwards
+
+Not often, but reliably: 2, 13 and 179 backward steps in three fixtures of
+increasing size. Roughly 26% of lines carry no `timestamp` at all — the
+bookkeeping types below.
+
+Anything that needs a monotonic clock has to clamp to a running maximum. Sorting
+by timestamp is not the same as reading in file order, and file order is the
+truth.
+
+### 4. A session is not a sitting
+
+Sessions are resumed for days or weeks. Across forty sessions, wall-clock time
+totals 351 days and active time totals 3.6 days: **99% of elapsed time inside a
+session is idle**. The longest single gap inside one session is 58 days.
+
+Twenty-three of forty sessions span more than a day. Reporting "session
+duration" as last-minus-first is technically true and almost always useless;
+subtract the gaps.
+
+---
+
+## Record types
+
+One JSON object per line, UTF-8, appended in write order. Eleven `type` values
+were observed:
+
+| `type` | carries `message` | has `uuid`/`parentUuid` | has `timestamp` | what it is |
 | --- | --- | --- | --- | --- |
-| `tool_use` | `type id name input caller` | 10 | 296 | 2,660 |
-| `tool_result` | `type tool_use_id content is_error?` | 10 | 296 | 2,660 |
-| `thinking` | `type thinking signature` | 11 | 189 | 917 |
-| `text` | `type text` | 4 | 76 | 714 |
-| `image` | `type source{type,media_type,data}` | — | — | 9 |
+| `assistant` | yes | yes | yes | one block of a model turn |
+| `user` | yes | yes | yes | a human turn, or a tool result |
+| `attachment` | no | yes | yes | editor context injected around a turn |
+| `system` | no | yes | yes | hook output, API errors, compaction boundaries |
+| `queue-operation` | no | no | yes | queued-prompt bookkeeping |
+| `custom-title` | no | no | no | the session title you set |
+| `ai-title` | no | no | no | the session title generated for you |
+| `last-prompt` | no | no | no | the most recent prompt, verbatim |
+| `mode` | no | no | no | permission mode changes |
+| `file-history-snapshot` | no | no | no | editor undo state |
+| `file-history-delta` | no | no | yes | editor undo state |
 
-Three corrections to the shape given in the brief:
+Documented elsewhere but never observed in any file checked: `pr-link`,
+`atis-latch`.
 
-1. **`thinking` and `image` blocks exist** and were not listed. `thinking`
-   carries a `signature`; `image` carries a base64 `source.data` that can be
-   hundreds of KB and must never be decoded eagerly.
-2. **`tool_use` has a fifth key, `caller`**, an object with a `type` field.
-3. **`is_error` is usually absent.** It is present on 9/10, 80/296 and
-   1,352/2,660 `tool_result` blocks, and *true* on only 3, 13 and 68 of them.
-   Absent must be read as "no error"; a parser that requires the key sees no
-   failures at all in fixture B.
+**The last six types are bookkeeping**, not conversation. In the largest fixture
+they are 2,748 of 10,757 lines — 26% of the file. Three of them
+(`custom-title`, `ai-title`, `last-prompt`) contain **prompt text verbatim**, so
+anything that displays "the session title" is displaying something the user
+wrote. Treat those three as content, not metadata.
 
-`tool_result.content` is **not** always a string:
+`sessionId` is *not* universal: `file-history-snapshot` records omit it.
 
-```
-string                          A 10   B 170   C 1,678
-array of { type: "text", … }           B 148   C 1,815
-array of { type: "image", … }          B  13   C   141
-array of { type: "tool_reference" }    B   4   C     8
-```
-
-## 5. `usage` (assistant records only)
+## `message`
 
 ```
-input_tokens                  number      always
-output_tokens                 number      always
-cache_creation_input_tokens   number      always
-cache_read_input_tokens       number      always
-cache_creation                { ephemeral_1h_input_tokens,
-                                ephemeral_5m_input_tokens }
-server_tool_use               { web_fetch_requests, web_search_requests }
-service_tier                  string | null
-inference_geo                 string | null
-speed                         string | null
-iterations                    array | null — per-API-iteration copies of the
-                              four token counters plus a `type`
-output_tokens_details         { thinking_tokens } — **only in fixture A**
+role            "user" | "assistant"
+content         string | array of blocks
+model           assistant only
+id              assistant only — the API message id, and the grouping key
+type            assistant only, always "message"
+stop_reason     tool_use | end_turn | stop_sequence | max_tokens | null
+stop_sequence
+stop_details    object
+usage           assistant only
+diagnostics     { cache_miss_reason: { type, cache_missed_input_tokens? } }
+container       rare
+context_management  rare
 ```
 
-`output_tokens_details` appeared in 25 records total, all in fixture A
-(writer version 2.1.229), and in none of the 4,840 assistant records of
-B and C (versions 2.1.215–2.1.226). It is version-dependent and optional.
+Models observed: `claude-opus-5`, `claude-opus-4-8`, `claude-fable-5`, and
+**`<synthetic>`**.
 
-The four `*_tokens` fields are the only ones AgentTape depends on. Context
-size at a turn is `input_tokens + cache_read_input_tokens`; observed maxima
-were 59,965 (A), 486,486 (B) and 997,435 (C).
+`<synthetic>` is not a model. It is what the writer puts on an assistant record
+that represents a *failed API call* rather than a response — it appears
+alongside `isApiErrorMessage: true`, `error` and `apiErrorStatus`, and its
+`usage` has `service_tier`, `inference_geo`, `speed` and `iterations` all
+`null`. It shows up in **17 of 40 sessions**, so almost half of all sessions
+contain at least one failed API call, and nothing in a normal transcript viewer
+makes that visible.
 
-`service_tier`, `inference_geo`, `speed` and `iterations` are `null` on
-exactly the records whose model is `<synthetic>`, i.e. the API-error records.
+## Content blocks
 
-## 6. Linking, ordering and time
+| block | keys | notes |
+| --- | --- | --- |
+| `text` | `type text` | |
+| `thinking` | `type thinking signature` | not in any public schema |
+| `tool_use` | `type id name input caller` | `caller` is an object with a `type` |
+| `tool_result` | `type tool_use_id content is_error?` | see below |
+| `image` | `type source{type,media_type,data}` | base64, can be hundreds of KB |
 
-**`parentUuid` chains resolve.** Across all three fixtures, every non-null
-`parentUuid` pointed at a `uuid` present earlier in the same file
-(`dangling = 0`). But most "roots" are an artefact: bookkeeping records carry
-no `uuid` key at all, so they look like roots. Counting only records that
-*have* the key, fixture C holds **5** genuine roots (`parentUuid: null`) — one
-per resume/compaction segment — not 3,018.
+**`is_error` is usually absent.** It appeared on 9 of 10, 80 of 296 and 1,352 of
+2,660 `tool_result` blocks in three fixtures, and was `true` on only 3, 13 and
+68 of them. A parser that requires the key finds no failures at all in some
+files. Absent means "no error".
 
-**`isSidechain` was `false` on all 8,733 records** that carried it. Subagent
-transcripts live in the separate `subagents/` directory, so a main-session file
-contains no sidechain. The field cannot be used to detect subagent work from
-the main file alone. (v1 does not read `subagents/`.)
+**`tool_result.content` is not always a string.** It is a string about half the
+time and an array the rest, and the array holds `text`, `image` and
+`tool_reference` blocks. In one session, the twelve largest lines — over a
+megabyte each — are results made entirely of base64 images with no text in them
+at all. Anything that measures "characters" needs to decide what an image
+counts as.
 
-**`tool_use` ↔ `tool_result` pairing is total and local.** 10/10, 296/296 and
-2,660/2,660 matched, with no duplicate or orphan result ids. The result
-follows its call by a median of 1 line and by at most 6 lines in any fixture,
-so a small sliding window is enough — no whole-file map required.
+## `usage` — assistant records only
 
-Tool wall-clock durations, from the two timestamps:
+```
+input_tokens                 always
+output_tokens                always
+cache_read_input_tokens      always
+cache_creation_input_tokens  always
+cache_creation               { ephemeral_1h_input_tokens, ephemeral_5m_input_tokens }
+server_tool_use              { web_fetch_requests, web_search_requests }
+service_tier                 string | null
+inference_geo                string | null
+speed                        string | null
+iterations                   array | null — per-API-iteration copies of the counters
+output_tokens_details        { thinking_tokens } — version-dependent, see below
+```
 
-| | p50 | p95 | max |
-| --- | --- | --- | --- |
-| A | 2.7 s | 3.1 s | 3.1 s |
-| B | 2.0 s | 19.1 s | 622 s |
-| C | 3.0 s | 19.4 s | 604 s |
+**`input_tokens` is not the size of the prompt.** With prompt caching it is a
+rounding error and the real figure lives in `cache_read_input_tokens`. Summing
+`input_tokens` across one large session gives 8.5k against 2.0G of cache reads.
+Context size at a turn is `input_tokens + cache_read_input_tokens`.
 
-No negative durations were seen.
+**`output_tokens_details` is version-dependent.** It appeared in 25 records from
+writer version 2.1.229 and in none of the 4,840 assistant records written by
+2.1.215 through 2.1.226. Do not require it.
 
-**Timestamps are not monotonic.** 2, 13 and 179 backward steps respectively.
-The elapsed-time axis therefore clamps to a running maximum instead of
-trusting each value. 26% of lines in fixture C carry no `timestamp` at all
-(the bookkeeping types); those inherit the previous timestamp.
+## Linking, ordering and time
 
-**Sessions span days, not hours.** Fixture B covers 323 h wall-clock, fixture C
-covers 213 h — both are resumed repeatedly. Of C's 213 h, 207 h sit inside 104
-gaps longer than two minutes, leaving ~5.5 h of active work. Reporting
-wall-clock alone would be meaningless, which is why the summary strip reports
-active duration next to it.
+`parentUuid` chains resolve — every non-null value pointed at a `uuid` earlier
+in the same file, with no dangling references anywhere. But most apparent roots
+are an artefact: bookkeeping records carry no `uuid` key at all, so they look
+like roots. Counting only records that *have* the key, the largest fixture has
+**five** genuine roots — one per resume or compaction segment — not 3,018.
 
-**Compaction is visible.** A `system` record with `subtype: "compact_boundary"`
-carries `compactMetadata` with `preTokens`, `postTokens`,
-`cumulativeDroppedTokens`, `durationMs`, `trigger` and the uuids of the
-preserved segment; the summary that follows is a `user` record with
-`isCompactSummary: true`. Fixture C has 4. Context size drops sharply across
-one of these, so the context chart marks them — otherwise the drop reads as a
-measurement error.
+`tool_use` ↔ `tool_result` pairing is total and local: 10/10, 296/296 and
+2,660/2,660 matched, no duplicate or orphan ids. The result follows its call by
+a median of one line and at most six. A small sliding window is enough; no
+whole-file map is needed.
 
-## 7. Error signals
+Tool durations, taken from the two timestamps: median 2–3 seconds, p95 about 19
+seconds, maximum around 10 minutes. No negative durations were seen.
 
-A failed step is not one flag. AgentTape treats a step as failed when any of:
+## Failure is four different signals
+
+There is no single "this went wrong" flag. A step failed if any of:
 
 - `tool_result.is_error === true`
-- the record is `assistant` with `isApiErrorMessage === true` (models
-  `<synthetic>`, with `error` and `apiErrorStatus` alongside)
+- the record is `assistant` with `isApiErrorMessage === true`
 - a `system` record with `level: "error"` or `subtype: "api_error"`
 - `toolDenialKind` present on a `user` record — a denied permission prompt
 
-Counts of `is_error === true` alone: 3 / 13 / 68, matching the figures in the
-brief.
+Across the corpus, 661 steps failed out of 14,443 tool calls, about 4.6%. The
+rate is not uniform: shell commands fail around 2%, while browser-automation
+MCP tools fail 8–16%.
 
-## 8. Line-size distribution — why parsing is incremental
+## Compaction
 
-| bytes | A | B | C |
+A `system` record with `subtype: "compact_boundary"` carries `compactMetadata`:
+
+```
+preTokens, postTokens, cumulativeDroppedTokens, durationMs, trigger,
+preservedMessages { uuids[], allUuids[], anchorUuid },
+preservedSegment  { anchorUuid, headUuid, tailUuid }
+```
+
+The summary that follows is a `user` record with `isCompactSummary: true`.
+
+Compaction is rarer than you would expect: **4 of 40 sessions** compacted at
+all, 9 compactions in total — while the median session peaks at 517k tokens of
+context and seven sessions passed 900k. Sessions mostly run up against the
+ceiling and stop rather than compacting. Context also rarely plateaus: it
+reaches within 5% of its peak only 96% of the way through a median session,
+which is to say it grows until the session ends.
+
+## Subagents
+
+```
+subagents/agent-<id>.jsonl        the run
+subagents/agent-<id>.meta.json    { agentType, description, spawnDepth, toolUseId }
+```
+
+The transcript is the same format as a main session, with `isSidechain: true`
+on every record and an extra `agentId` on each line matching the filename.
+Record types are only `assistant`, `user` and `attachment` — no bookkeeping.
+
+**The sidecar is the only link to the parent.** `toolUseId` is the id of the
+`Agent` `tool_use` in the main file. Nothing inside a subagent transcript points
+back: no field of its first record equals the parent's tool id.
+
+Without the sidecar, the clock works. A subagent runs strictly between its call
+and that call's result; that window identified the correct parent for all
+sixteen runs of one session with no ambiguity. Parallel delegations would
+overlap, so a pairing built this way should decline rather than guess.
+
+`description` in the sidecar is written from the prompt that spawned the agent.
+It is prose about the user's work. Treat it as content.
+
+Delegation is common: 14 of 40 sessions delegate, 305 delegations in total, and
+one session delegated 130 times.
+
+## Sizes, and why parsing has to be incremental
+
+| bytes per line | small fixture | medium | large |
 | --- | --- | --- | --- |
 | < 1 K | 35 | 442 | 3,774 |
 | 1–10 K | 27 | 767 | 6,343 |
 | 10–50 K | 8 | 48 | 467 |
 | 50–200 K | 0 | 3 | 50 |
-| 200 K–1 M | 0 | 8 | 111 |
+| 200 K – 1 M | 0 | 8 | 111 |
 | > 1 M | 0 | 0 | **12** |
 
-Twelve lines in fixture C exceed one megabyte and the largest is 1.34 MB.
-Those 173 lines above 50 KB carry most of the file's bytes while being 1.6% of
-its lines. The index therefore stores byte offsets and lengths and re-reads a
-body from the `Blob` only when the playhead asks for it.
+Twelve lines exceed one megabyte in a single 76 MB file, and the largest is
+1.34 MB. Those 173 lines above 50 KB are 1.6% of the lines and most of the
+bytes. Across the corpus the median session is 5.4 MB and the largest is 76.6
+MB.
 
-## 9. Fields deliberately ignored
+`JSON.parse` on a whole file is not an option, and neither is holding the parsed
+objects. Read bytes, split on `0x0A`, index each line into a flat row, and keep
+byte offsets so a body can be re-read on demand.
 
-`signature` (thinking), `image.source.data`, `attachment.content`,
+## Fields worth ignoring
+
+`signature` on thinking blocks, `image.source.data`, `attachment.content`,
 `hookInfos[].command`, `snapshot.trackedFileBackups`, `originalFile`,
-`structuredPatch` — all are large, content-bearing, and irrelevant to the
-questions v1 answers. They are never read into the index.
+`structuredPatch`. All large, all content-bearing, none needed to describe what
+happened.
+
+## What this document does not know
+
+Forty sessions, one machine, one person, twenty-four writer versions between
+2.1.197 and 2.1.251. That is a wide sample of versions and a narrow sample of
+users.
+
+Everything above is descriptive. Two documented record types never appeared. One
+`usage` field exists in one version and not its neighbours. A session written by
+a much newer or much older build will carry shapes nothing here anticipates.
+
+The practical advice that falls out of that: treat every field as optional,
+degrade an unrecognised record type to something generic rather than throwing,
+skip a malformed line instead of aborting the file, and never assume a key is
+present because it was present yesterday.
