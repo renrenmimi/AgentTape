@@ -1811,6 +1811,27 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // a machine without one, 163 with. Asserted through the shared label list.
   ok(/for \(const label of L\) skip\(label, why\)/.test(st),
     "the helper-dependent block emits one label list either way");
+
+  // Every block says what it starts from, so a block that starts wrong fails
+  // once by name instead of eighteen times by symptom.
+  const blocks = [...st.matchAll(/^\s*\/\/ ---- (.+?) -+$/gm)].map((m) => m[1].trim());
+  const guarded = [...st.matchAll(/await need\("(.+?)"\)/g)].map((m) => m[1]);
+  ok(blocks.length > 15, "the suite is still made of named blocks", `${blocks.length}`);
+  ok(guarded.length >= 14, "…and most of them declare their preconditions",
+    `${guarded.length} of ${blocks.length}`);
+  ok(guarded.every((g) => blocks.includes(g)),
+    "…each naming a block that exists, so the message points somewhere",
+    guarded.filter((g) => !blocks.includes(g)).join(", "));
+  ok(/throw new Error\(`\$\{block\}:/.test(st),
+    "…and a precondition that cannot be met names the block that wanted it");
+
+  // The rule the teardown bug came from: wait for the consequence, never for a
+  // promise and never for a frame count.
+  ok(/const until = async/.test(st) && /const quiet = async/.test(st),
+    "the suite can wait on an observable consequence, and on quiescence");
+  ok(/await until\(\) =>/.test(st) === false && (st.match(/await until\(/g) ?? []).length >= 8,
+    "…and does so in the places a fixed frame count used to be",
+    String((st.match(/await until\(/g) ?? []).length));
 }
 
 // ---------------------------------------------------------------- did every check run
