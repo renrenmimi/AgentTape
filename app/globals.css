@@ -384,6 +384,31 @@ input.filter-input { width: 260px; }
   font-variant-numeric: tabular-nums;
 }
 
+.tool-menu-search {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  width: 100%;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.filter-num { width: 118px; }
+
+.filter-pos {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-pos-end { color: var(--accent-text); }
+
 .filter-count {
   font-family: var(--mono);
   font-size: 11px;
@@ -596,6 +621,23 @@ input.filter-input { width: 260px; }
 .entry-now .entry-card {
   border-color: var(--accent);
   background: var(--accent-bg);
+}
+
+/* A filter marks entries rather than hiding them. */
+.entry-miss .entry-card { opacity: 0.42; }
+.entry-hit .entry-card { border-color: var(--accent-2); }
+
+.entry-match {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 15px;
 }
 
 .entry-head {

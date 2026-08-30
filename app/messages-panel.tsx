@@ -31,9 +31,13 @@ type Props = {
   redacted: boolean;
   onSelectStep: (globalIndex: number) => void;
   shownIndex: (globalIndex: number) => number;
+  /** One byte per entry: 1 when a step in it matches the active filter. */
+  entryHits: Uint8Array | null;
 };
 
-export default function MessagesPanel({ entries, steps, curStep, redacted, onSelectStep, shownIndex }: Props) {
+export default function MessagesPanel({
+  entries, steps, curStep, redacted, onSelectStep, shownIndex, entryHits,
+}: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState<Set<number>>(() => new Set());
   const [follow, setFollow] = useState(true);
@@ -140,11 +144,15 @@ export default function MessagesPanel({ entries, steps, curStep, redacted, onSel
     if (!e) continue;
     const isCur = i === curEntry;
     const isOpen = open.has(i) || isCur;
+    // A filter marks entries here rather than hiding them, for the same reason
+    // it dims ticks rather than removing them: the array is what it is.
+    const hit = entryHits ? entryHits[i] === 1 : null;
     const cls = [
       "entry",
       e.role === "user" ? "entry-user" : "entry-assistant",
       e.err ? "entry-err" : "",
       isCur ? "entry-now" : "",
+      hit === true ? "entry-hit" : hit === false ? "entry-miss" : "",
     ].join(" ");
     const first = steps[e.from];
     const label = first ? first.preview : "";
@@ -161,6 +169,7 @@ export default function MessagesPanel({ entries, steps, curStep, redacted, onSel
             <span className="entry-idx">{fmtInt(i + 1)}</span>
             <span className="entry-role">{e.role}</span>
             <span className="entry-sum">{label || <em style={{ opacity: 0.6 }}>no summary</em>}</span>
+            {hit === true && <span className="entry-match" title="Matches the active filter">match</span>}
             {e.err && <span className="entry-fail">failed</span>}
             <span className="entry-tok">
               {e.output ? "+" + fmtTokens(e.output) + " out" : fmtInt(e.chars) + " ch"}

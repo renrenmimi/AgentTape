@@ -13,7 +13,10 @@ import { loadJsonlBlob } from "@/lib/load";
 import { tapeFromFile, serializeTape, type TapeFile } from "@/lib/tape";
 import { redactTape } from "@/lib/redact";
 import { fmtInt, summarise, traceJump } from "@/lib/summary";
-import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek, type Filter } from "@/lib/filter";
+import {
+  EMPTY_FILTER, applyFilter, buildFilterIndex, entryMask, isActive, matchOrdinal, seek,
+  type Filter,
+} from "@/lib/filter";
 import {
   agentIdFromName, delegationSummary, findDelegations, pairBySidecar, pairByTime, summariseRun,
   type Delegation, type SubRun,
@@ -116,6 +119,17 @@ export default function Page() {
   );
 
   const goToGlobal = useCallback((gi: number) => setGpos(gi), []);
+
+  /** Which match the playhead is on, and which array entries contain one. */
+  const ordinal = useMemo(
+    () => (filtering && view ? matchOrdinal(mask, pos) : 0),
+    [filtering, view, mask, pos],
+  );
+  const entryHits = useMemo(
+    () => (filtering && view && tape ? entryMask(tape.entries.length, view.steps, mask) : null),
+    [filtering, view, tape, mask],
+  );
+
 
   /** Every delegation, with whatever run has been attached to it. */
   const delegations = useMemo<Delegation[]>(() => {
@@ -550,6 +564,7 @@ export default function Page() {
             index={filterIndex}
             matches={matches}
             total={view.steps.length}
+            ordinal={ordinal}
             compactions={compactions}
             onJumpCompaction={jumpCompaction}
             outOfFilter={filtering && mask[pos] === 0}
@@ -609,6 +624,7 @@ export default function Page() {
           jumpBy={summary.jumpBy}
           peakCtx={summary.peakCtx}
           compactAt={compactions}
+          mask={filtering ? mask : null}
           trace={jumpTrace}
           fellAtShown={jumpTrace && jumpTrace.fellAt >= 0 ? shownIndex(jumpTrace.fellAt) : 0}
           onPos={setPos}
@@ -623,6 +639,7 @@ export default function Page() {
           redacted={tape.meta.redacted}
           onSelectStep={goToGlobal}
           shownIndex={shownIndex}
+          entryHits={entryHits}
         />
         <StepDetail
           tape={tape}

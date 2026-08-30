@@ -14,7 +14,8 @@
 // a search that quietly misses matches is worse than one that says what it
 // covers.
 
-import { EMPTY_FILTER, SIZE_STEPS, isActive, type Filter, type FilterIndex } from "@/lib/filter";
+import { EMPTY_FILTER, SIZE_PRESETS, isActive, type Filter, type FilterIndex } from "@/lib/filter";
+import { useState } from "react";
 import { fmtInt } from "@/lib/summary";
 
 type Props = {
@@ -23,15 +24,22 @@ type Props = {
   index: FilterIndex;
   matches: number;
   total: number;
+  /** Which match the playhead is on, 1-based, or 0 when it is not on one. */
+  ordinal: number;
   compactions: number[];
   onJumpCompaction: () => void;
   outOfFilter: boolean;
 };
 
 export default function FilterBar({
-  filter, onFilter, index, matches, total, compactions, onJumpCompaction, outOfFilter,
+  filter, onFilter, index, matches, total, ordinal, compactions, onJumpCompaction, outOfFilter,
 }: Props) {
   const active = isActive(filter);
+  // A session can call a hundred MCP tools. Twenty-eight is already more than
+  // a menu should ask anyone to read.
+  const [toolQuery, setToolQuery] = useState("");
+  const q = toolQuery.trim().toLowerCase();
+  const shown = q ? index.tools.filter((t) => t.name.toLowerCase().includes(q)) : index.tools;
 
   const toggleTool = (name: string) => {
     const has = filter.tools.includes(name);
@@ -66,7 +74,20 @@ export default function FilterBar({
         </summary>
         <div className="tool-menu-panel">
           {index.tools.length === 0 && <p className="empty-note">This tape has no tool calls.</p>}
-          {index.tools.map((t) => (
+          {index.tools.length > 6 && (
+            <input
+              type="search"
+              className="tool-menu-search"
+              value={toolQuery}
+              placeholder={`filter ${index.tools.length} tool names`}
+              aria-label="Filter the list of tool names"
+              onChange={(e) => setToolQuery(e.target.value)}
+            />
+          )}
+          {index.tools.length > 0 && shown.length === 0 && (
+            <p className="empty-note">No tool name contains that.</p>
+          )}
+          {shown.map((t) => (
             <label className="tool-opt" key={t.name}>
               <input
                 type="checkbox"
@@ -80,19 +101,27 @@ export default function FilterBar({
         </div>
       </details>
 
-      <label className="filter-field">
-        <span className="sr-only">Minimum payload size</span>
-        <select
-          className="filter-input"
-          value={filter.minChars}
-          aria-label="Minimum payload size in characters"
-          onChange={(e) => onFilter({ ...filter, minChars: Number(e.target.value) })}
-        >
-          {SIZE_STEPS.map((s) => (
-            <option value={s.value} key={s.value}>{s.label}</option>
-          ))}
-        </select>
-      </label>
+      <div className="filter-field">
+        <label className="filter-note" htmlFor="min-chars">≥ chars</label>
+        <input
+          id="min-chars"
+          type="number"
+          min={0}
+          step={1000}
+          list="size-presets"
+          className="filter-input filter-num"
+          value={filter.minChars || ""}
+          placeholder="any size"
+          aria-label="Minimum payload size in characters. Any number; the list offers common ones."
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            onFilter({ ...filter, minChars: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0 });
+          }}
+        />
+        <datalist id="size-presets">
+          {SIZE_PRESETS.map((v) => <option value={v} key={v} />)}
+        </datalist>
+      </div>
 
       <button
         type="button"
@@ -121,6 +150,18 @@ export default function FilterBar({
           ? `${fmtInt(matches)} of ${fmtInt(total)} match`
           : `${fmtInt(total)} steps`}
       </span>
+
+      {active && matches > 0 && (
+        // Where the playhead sits among the matches. Without this, pressing n
+        // on the last match does nothing and there is no way to know why.
+        <span className={"filter-pos" + (ordinal === matches ? " filter-pos-end" : "")}>
+          {ordinal === 0
+            ? "not on a match"
+            : ordinal === matches
+              ? `on match ${fmtInt(ordinal)} of ${fmtInt(matches)} · last`
+              : `on match ${fmtInt(ordinal)} of ${fmtInt(matches)}`}
+        </span>
+      )}
 
       <button
         type="button"
