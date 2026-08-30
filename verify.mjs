@@ -605,6 +605,30 @@ ok(uuidLeaks.length === 0, "no file contains anything shaped like a session id",
 ok(remoteUrls.length === 0, "no shipped file names a host other than 127.0.0.1",
   remoteUrls.join(", "));
 
+// Console hygiene, asserted structurally because a warning is invisible to a
+// test suite. Only app/canvas.ts may create a 2D context, since the options are
+// honoured on the first call only and a second caller would silently get the
+// wrong kind of canvas.
+const canvasCallers = sources
+  .filter((f) => f.includes("/app/") && !f.endsWith("canvas.ts"))
+  .filter((f) => /getContext\s*\(/.test(readFileSync(f, "utf8")));
+ok(canvasCallers.length === 0, "only app/canvas.ts creates a 2D context",
+  canvasCallers.map((f) => f.replace(root, "")).join(","));
+const canvasSrc = read("app/canvas.ts");
+ok(/willReadFrequently/.test(canvasSrc), "the context helper decides about readback");
+ok(/has\("selftest"\)/.test(canvasSrc),
+  "…and only asks for a readable canvas when the self-test will read it");
+
+// The helper probe must not fire on every load: a refused connection is logged
+// in red by the network layer, where no catch can reach it.
+const emptySrc = read("app/empty-state.tsx");
+const probeGuard = emptySrc.indexOf("helperSeenBefore()");
+const probeCall = emptySrc.indexOf("return probe();");
+ok(probeGuard > 0 && probeCall > probeGuard,
+  "the helper is only probed unasked once it has answered here before");
+ok(/Look for it|Look again/.test(emptySrc),
+  "…and there is a control to look for it the first time");
+
 // nothing on window unless the flag is set
 const page = read("app/page.tsx");
 const guard = page.indexOf('has("selftest")');

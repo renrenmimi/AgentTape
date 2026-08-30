@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { IDLE_GAP_MS, type Step } from "@/lib/format";
 import { fmtDuration } from "@/lib/summary";
 import { KIND_LABEL } from "./glyphs";
+import { ctx2d } from "./canvas";
 
 // Four bands, top to bottom: the tick rail, the failure rail, a row of time
 // labels, and the elapsed-time axis. They are laid out by hand because they
@@ -179,7 +180,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, onSeek, heigh
     size.current = { w, h };
     cv.width = Math.round(w * dpr);
     cv.height = Math.round(h * dpr);
-    const g = cv.getContext("2d");
+    const g = ctx2d(cv);
     if (!g) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
@@ -387,7 +388,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, onSeek, heigh
         cv.width = Math.round(w * dpr);
         cv.height = Math.round(h * dpr);
       }
-      const g = cv.getContext("2d");
+      const g = ctx2d(cv);
       if (!g) return;
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);

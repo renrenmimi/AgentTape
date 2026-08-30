@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { Step } from "@/lib/format";
 import { fmtInt, fmtTokens, type JumpTrace } from "@/lib/summary";
+import { ctx2d } from "./canvas";
 
 const PAD = 8;
 
@@ -106,7 +107,7 @@ export default function ContextChart({
     const h = el.clientHeight;
     cv.width = Math.round(w * dpr);
     cv.height = Math.round(h * dpr);
-    const g = cv.getContext("2d");
+    const g = ctx2d(cv);
     if (!g) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
@@ -205,7 +206,7 @@ export default function ContextChart({
         cv.width = Math.round(w * dpr);
         cv.height = Math.round(h * dpr);
       }
-      const g = cv.getContext("2d");
+      const g = ctx2d(cv);
       if (!g) return;
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);
