@@ -1835,6 +1835,36 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(/const until = async/.test(st) && /const quiet = async/.test(st),
     "the suite can wait on an observable consequence, and on quiescence");
 
+  // The rule that was written last round and then deleted, because the code
+  // could not obey it. It could not obey it because the suite predates this
+  // project having a browser driver, so it changed state by calling callbacks
+  // instead of by operating the interface. That constraint is gone, the code
+  // obeys the rule now, and the rule is back.
+  ok(!stLines.some((l) => /\ba\.[a-zA-Z]+\(/.test(l) && !/\ba\.re\b/.test(l)),
+    "no block calls anything on an object captured during an earlier render");
+  ok(!/runBlocks\(\s*a\b/.test(st) && !/^\s*a: Api,/m.test(st),
+    "…and the blocks are not handed one to be tempted by");
+  ok(!stLines.some((l) => /onDemo\(/.test(l)),
+    "the demo is loaded by pressing the button, not by calling the callback behind it");
+  ok(/const slider = \(\) =>/.test(st),
+    "…and no DOM node is held across a block either: `need` remounts the workbench");
+
+  // What is still driven directly, and the requirement that each one says why.
+  const direct = stLines.filter((l) => /api\(\)\.(setPos|setRules|loadTapeFile|attachSyntheticRun)/.test(l));
+  ok(direct.length <= 8, "what is left calling into the page directly is a short list",
+    `${direct.length} sites`);
+  ok(/there is no control that jumps to an arbitrary index|no control that jumps/.test(st) ||
+     /six thousand ArrowRights/.test(st),
+    "…and the one playhead position that cannot be typed says why");
+  ok(/Not driveable at all/.test(st) && /Set rather than typed/.test(st),
+    "…and both rule-set replacements say why they are not driven");
+
+  // Operating the interface, rather than reaching past it.
+  ok(/function click\(/.test(st) && /function typeInto\(/.test(st) && /async function pickTool\(/.test(st),
+    "the suite can click a control, type into one, and open a menu");
+  ok(/const shortcut = /.test(st) && /function trackKey\(/.test(st),
+    "…and send a shortcut to the window and a key to the playhead");
+
   // An uncaught error used to be silent. Both of last round's real defects
   // were uncaught TypeErrors and the score did not move by one when they were
   // fixed — 141 before, 141 after. One assertion over a collected list would
