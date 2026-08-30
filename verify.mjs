@@ -1844,8 +1844,23 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(/console\.error = \(/.test(st), "…and what it logged as an error");
   ok(/TRAP\.threw\.length === 0/.test(st) && /TRAP\.logged\.length === 0/.test(st),
     "…and fails on any of it");
-  ok(/armErrorTrap\(\);/.test(read("app/page.tsx")),
+  const pg = read("app/page.tsx");
+  ok(/armErrorTrap\(\);/.test(pg),
     "…armed before the suite starts, so a throw during first render is caught too");
+
+  // The suite must start exactly once. It used to be scheduled inside the
+  // effect that exposes the debug handle, whose dependency list is every piece
+  // of state on the page: the suite changed state, the effect re-ran, and four
+  // hundred milliseconds later a second suite started, then a third, then a
+  // fourth. Four concurrent runs mutating one page is the whole explanation
+  // for two rounds of symptoms, so the scheduling effect gets its own
+  // assertion — an empty dependency list, and nothing to re-run for.
+  const sched = pg.slice(pg.indexOf("void runSelfTest()"));
+  ok(/\}, \[\]\);/.test(sched.slice(0, 200)),
+    "the suite is scheduled from an effect with nothing to re-run for",
+    sched.slice(0, 200).split("\n").slice(-3).join(" ").trim());
+  ok(/let started = false;/.test(st) && /if \(started\) return;/.test(st),
+    "…and refuses a second run even if something schedules one");
 
   // An allowlist is how a check stops being a check. This one is empty; if it
   // ever is not, every entry has to say what it is and why it is unavoidable.

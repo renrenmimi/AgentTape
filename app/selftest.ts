@@ -250,7 +250,19 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  */
 const DECLARED_ASSERTIONS = 167;
 
+/**
+ * One run per page load, belt as well as braces.
+ *
+ * The scheduling bug that started four concurrent suites is fixed where it
+ * lived, in the effect that scheduled them. This is here because the cost of
+ * getting that wrong again is two rounds of chasing symptoms, and the cost of
+ * this line is nothing.
+ */
+let started = false;
+
 export async function runSelfTest(): Promise<void> {
+  if (started) return;
+  started = true;
   const results: { ok: boolean; label: string; note?: string; skipped?: boolean }[] = [];
   const ok = (cond: boolean, label: string, note?: string) => {
     results.push({ ok: !!cond, label, note });
