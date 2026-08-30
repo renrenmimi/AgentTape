@@ -59,6 +59,8 @@ export default function Page() {
   const [rules, setRules] = useState<Rule[]>(DEFAULT_RULES);
   const [keysOpen, setKeysOpen] = useState(false);
   const [overview, setOverview] = useState(false);
+  /** Whether the helper has answered here, so the overview can offer its route. */
+  const [helperSeen, setHelperSeen] = useState(false);
   /** The delegated run being stepped through, by the parent step it came from. */
   const [inside, setInside] = useState(-1);
   /** A dropped transcript waiting for the user to say what to do with it. */
@@ -637,6 +639,13 @@ export default function Page() {
       get assertions() { return assertions; },
       get rules() { return rules; },
       setRules,
+      // Behind the flag: the native folder picker cannot be driven headlessly,
+      // so a harness needs a way to hand the same Files to the same indexer.
+      indexFiles: async (files: File[]) => {
+        const { buildLocalIndex, collectFromFiles } = await import("./local-index");
+        return buildLocalIndex(collectFromFiles(files));
+      },
+      pickerSupport: async () => (await import("./local-index")).pickerSupport(),
       reportText: () => (tape && summary
         ? markdownReport({ tape, summary, trace: jumpTrace, delegations, assertions, pairs, shownIndex })
         : ""),
@@ -659,6 +668,7 @@ export default function Page() {
       <main className="tape">
         {overview && (
           <Overview
+            helperReachable={helperSeen}
             onClose={() => setOverview(false)}
             onOpen={(s) => {
               setOverview(false);
@@ -671,6 +681,7 @@ export default function Page() {
         )}
         <EmptyState
           onOverview={() => setOverview(true)}
+          onHelperSeen={setHelperSeen}
           onFiles={onFiles}
           onHelperPick={onHelperPick}
           onDemo={onDemo}

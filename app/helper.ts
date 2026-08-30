@@ -11,13 +11,10 @@ import { useCallback, useEffect, useState } from "react";
 
 export const HELPER = "http://127.0.0.1:4319";
 
-export type HelperAgent = {
-  id: string;
-  bytes: number;
-  /** The parent tool_use id, from the sidecar. Empty when there is no sidecar. */
-  toolUseId: string;
-  agentType: string;
-};
+// `export type { X as Y }` re-exports without binding the name locally, and
+// HelperSession below needs the name. Import it, then re-export.
+import type { SubagentRef } from "@/lib/stats";
+export type HelperAgent = SubagentRef;
 
 export type HelperSession = {
   project: string;
@@ -69,39 +66,11 @@ export const subagentUrl = (
   `${HELPER}/subagent?project=${encodeURIComponent(s.project)}` +
   `&session=${encodeURIComponent(s.session)}&agent=${encodeURIComponent(agent)}`;
 
-/** Statistics for one session. Counts, durations, token totals and names from
- *  a fixed vocabulary — there is no field here that can hold a sentence. */
-export type SessionStats = {
-  project: string;
-  session: string;
-  bytes: number;
-  mtime: number;
-  lines: number;
-  steps: number;
-  conversationSteps: number;
-  turns: number;
-  toolCalls: number;
-  tools: Record<string, number>;
-  toolErrors: Record<string, number>;
-  errors: number;
-  firstT: number;
-  lastT: number;
-  wallMs: number;
-  activeMs: number;
-  idleGaps: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheCreate: number;
-  peakCtx: number;
-  compactions: number;
-  delegations: number;
-  /** The subagent transcripts beside this session. Never cached: they change
-   *  without the session's own size or mtime moving. */
-  agents: HelperAgent[];
-  models: string[];
-  ctxProfile: number[];
-};
+// The record itself is defined in lib/stats.ts, which is where the property
+// that matters is documented and tested: no field of it can hold a sentence.
+// Re-exported rather than restated, because two declarations of the same shape
+// is two places for one of them to grow a field the other does not have.
+export type { SessionStats, SubagentRef } from "@/lib/stats";
 
 export const overviewUrl = (): string => `${HELPER}/overview`;
 

@@ -12,10 +12,20 @@
 // content this whole project exists to keep on your own machine. A session here
 // is a project directory, an id and a clock — the same three things the helper
 // prints — and verify.mjs asserts that nothing else gets in.
+//
+// Two routes reach this screen. The local helper serves the index over
+// loopback; the File System Access API lets the browser build the same index
+// itself from a folder the user grants, with no server anywhere. Both hand the
+// work to lib/session-index.ts, so there is one definition of a session record
+// and one freshness rule rather than two that drift.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtBytes, fmtDate, fmtDuration, fmtInt, fmtTokens } from "@/lib/summary";
 import { overviewUrl, type SessionStats } from "./helper";
+import {
+  SUPPORT_NOTE, buildLocalIndex, clearLocalCache, collectFromDirectory, collectFromFiles,
+  localCacheSize, pickerSupport, type LocalIndexResult, type PickerSupport,
+} from "./local-index";
 import { useDialogFocus } from "./dialog";
 
 type Col = {
@@ -79,19 +89,39 @@ function Spark({ profile, peak, scale }: { profile: number[]; peak: number; scal
   );
 }
 
-type Props = { onOpen: (s: SessionStats) => void; onClose: () => void };
+type Source = "" | "helper" | "local";
 
-export default function Overview({ onOpen, onClose }: Props) {
+type Props = {
+  onOpen: (s: SessionStats) => void;
+  onClose: () => void;
+  /** True when the helper answered on this machine, so its route is worth offering. */
+  helperReachable: boolean;
+};
+
+export default function Overview({ onOpen, onClose, helperReachable }: Props) {
   const [rows, setRows] = useState<SessionStats[] | null>(null);
   const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [source, setSource] = useState<Source>("");
   const [sort, setSort] = useState({ key: "mtime", desc: true });
+  const [progress, setProgress] = useState("");
+  const [local, setLocal] = useState<LocalIndexResult | null>(null);
+  const [support, setSupport] = useState<PickerSupport>("none");
+  const [cacheBytes, setCacheBytes] = useState(0);
+  const dirInput = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   useDialogFocus(panel);
 
-  const load = useCallback(() => {
+  useEffect(() => {
+    setSupport(pickerSupport());
+    setCacheBytes(localCacheSize());
+  }, []);
+
+  const fromHelper = useCallback(() => {
     setBusy(true);
     setErr("");
+    setSource("helper");
+    setLocal(null);
     fetch(overviewUrl())
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j: { sessions?: SessionStats[]; error?: string }) => {
@@ -102,7 +132,50 @@ export default function Overview({ onOpen, onClose }: Props) {
       .finally(() => setBusy(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const runLocal = useCallback(async (collect: () => Promise<{ sources: unknown[] } & object>) => {
+    setBusy(true);
+    setErr("");
+    setSource("local");
+    setProgress("");
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const found = (await collect()) as any;
+      if (!found.sources.length) {
+        setErr("No .jsonl transcripts in that folder. Point it at ~/.claude/projects.");
+        setRows([]);
+        return;
+      }
+      const res = await buildLocalIndex(found, (done, total, indexed, cached) => {
+        setProgress(`${done} of ${total} · ${indexed} read · ${cached} from cache`);
+      });
+      setLocal(res);
+      setRows(res.sessions);
+      setCacheBytes(localCacheSize());
+      if (!res.cacheWritten) {
+        setErr("Indexed, but the browser refused to cache it — the next pass will be just as slow.");
+      }
+    } catch (e) {
+      // An abandoned folder picker throws; that is a decision, not a fault.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/abort/i.test(msg)) setErr(msg);
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
+  }, []);
+
+  const pickFolder = useCallback(() => {
+    const pick = (window as unknown as {
+      showDirectoryPicker?: (o?: { mode?: string }) => Promise<FileSystemDirectoryHandle>;
+    }).showDirectoryPicker;
+    if (!pick) return;
+    void runLocal(async () => collectFromDirectory(await pick({ mode: "read" })));
+  }, [runLocal]);
+
+  const load = useCallback(() => {
+    if (source === "helper") fromHelper();
+    else if (source === "local" && support === "directory-picker") pickFolder();
+  }, [source, support, fromHelper, pickFolder]);
 
   const sorted = useMemo(() => {
     if (!rows) return [];
@@ -147,20 +220,96 @@ export default function Overview({ onOpen, onClose }: Props) {
           </span>
         )}
         <span className="spacer" />
-        <button type="button" className="btn btn-sm" onClick={load} disabled={busy}>
-          {busy ? "Indexing…" : "Refresh"}
-        </button>
+        {source === "local" && (
+          <span className="ov-src">read in this browser · nothing uploaded</span>
+        )}
+        {source === "helper" && <span className="ov-src">from the local helper</span>}
+        {source !== "" && (
+          <button type="button" className="btn btn-sm" onClick={load} disabled={busy}>
+            {busy ? "Indexing…" : "Refresh"}
+          </button>
+        )}
         <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
       </div>
 
       <div className="ov-body">
-        {err && (
-          <div className="err-box">
-            The helper did not answer: {err}. Start it with <code>npm run helper</code>.
+        {source === "" && (
+          <div className="ov-pick">
+            <p className="nested-note">
+              Every session on this machine, as statistics: how long, how many tool calls, how
+              many failed, how far the context grew. <b>No titles and no message text</b> —
+              a session here is a project directory, an id and a clock.
+            </p>
+
+            <div className="ov-routes">
+              <div className="ov-route">
+                <span className="eyebrow">in this browser</span>
+                <p>
+                  Grant this page read access to <code>~/.claude/projects</code> and it builds the
+                  index itself. {SUPPORT_NOTE[support]}
+                </p>
+                {support === "directory-picker" && (
+                  <button type="button" className="btn btn-accent" onClick={pickFolder}>
+                    Choose a folder
+                  </button>
+                )}
+                {support === "webkitdirectory" && (
+                  <>
+                    <button type="button" className="btn btn-accent"
+                      onClick={() => dirInput.current?.click()}>
+                      Choose a folder
+                    </button>
+                    <input
+                      ref={dirInput}
+                      type="file"
+                      className="sr-only"
+                      aria-label="Choose the projects folder"
+                      {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                      onChange={(e) => {
+                        const list = [...(e.target.files ?? [])];
+                        e.target.value = "";
+                        if (list.length) void runLocal(async () => collectFromFiles(list));
+                      }}
+                    />
+                  </>
+                )}
+                {support === "none" && <p className="ov-dim">Not available in this browser.</p>}
+              </div>
+
+              <div className="ov-route">
+                <span className="eyebrow">from the local helper</span>
+                <p>
+                  {helperReachable
+                    ? "The helper is answering on 127.0.0.1 and has already walked the directory."
+                    : "The helper is not running. Start it with npm run helper and come back."}
+                </p>
+                <button type="button" className={"btn" + (helperReachable ? " btn-accent" : "")}
+                  onClick={fromHelper} disabled={!helperReachable}>
+                  Use the helper
+                </button>
+              </div>
+            </div>
+
+            {cacheBytes > 0 && (
+              <p className="ov-note">
+                A previous browser index is cached here ({fmtBytes(cacheBytes)}), keyed by each
+                file&rsquo;s size and modification time.{" "}
+                <button type="button" className="btn btn-sm"
+                  onClick={() => { clearLocalCache(); setCacheBytes(0); }}>
+                  Clear it
+                </button>
+              </p>
+            )}
           </div>
         )}
-        {busy && !rows && <p className="empty-note">Indexing your sessions…</p>}
-        {rows && rows.length === 0 && !err && <p className="empty-note">No sessions found.</p>}
+
+        {err && <div className="err-box">{err}</div>}
+        {busy && (
+          <p className="empty-note">
+            Indexing{progress ? ` — ${progress}` : "…"}
+          </p>
+        )}
+        {rows && rows.length === 0 && !err && !busy && <p className="empty-note">No sessions found.</p>}
 
         {rows && rows.length > 0 && (
           <table className="ov-table">
@@ -208,11 +357,31 @@ export default function Overview({ onOpen, onClose }: Props) {
           </table>
         )}
 
-        <p className="ov-note">
-          Statistics only. No session titles, no first messages, no summaries — every one of
-          those is written from a prompt. Sparklines share one vertical scale, so the tallest
-          line is the session that grew the most context of any of them.
-        </p>
+        {rows && rows.length > 0 && (
+          <p className="ov-note">
+            Statistics only. No session titles, no first messages, no summaries — every one of
+            those is written from a prompt. Sparklines share one vertical scale, so the tallest
+            line is the session that grew the most context of any of them.
+            {local && (
+              <>
+                {" "}Read <b>{fmtBytes(local.bytes)}</b> across {fmtInt(local.sessions.length)}{" "}
+                transcripts in <b>{(local.ms / 1000).toFixed(1)}s</b> — {fmtInt(local.indexed)}{" "}
+                parsed, {fmtInt(local.cached)} from the browser cache
+                {local.failed ? `, ${fmtInt(local.failed)} unreadable` : ""}.
+                {cacheBytes > 0 && (
+                  <>
+                    {" "}The cache holds {fmtBytes(cacheBytes)} in this browser&rsquo;s local
+                    storage, keyed by size and modification time.{" "}
+                    <button type="button" className="btn btn-sm"
+                      onClick={() => { clearLocalCache(); setCacheBytes(0); }}>
+                      Clear it
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </p>
+        )}
       </div>
     </div>
   );

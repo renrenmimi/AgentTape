@@ -202,10 +202,8 @@ async function listAgents(project, session) {
  * The record itself is built by lib/stats.ts, which is where the property that
  * matters is documented and tested: no field of it can hold a sentence.
  */
-async function sessionStatsFor(project, session, path, st) {
+async function indexTranscript(session, path) {
   const { createIndexer, pushLine, finishIndex, pairTools } = await import("../lib/parser.ts");
-  const { sessionStats } = await import("../lib/stats.ts");
-
   const ix = createIndexer(session);
   let off = 0;
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
@@ -215,10 +213,7 @@ async function sessionStatsFor(project, session, path, st) {
     off += len + 1;
   }
   const { meta, steps, entries } = finishIndex(ix);
-  return sessionStats(
-    { project, session, bytes: st.size, mtime: st.mtimeMs },
-    meta, steps, entries, pairTools(steps),
-  );
+  return { meta, steps, entries, pairs: pairTools(steps) };
 }
 
 async function readCache() {
@@ -274,33 +269,30 @@ async function buildIndex({ onProgress } = {}) {
     }
   }
 
-  let cached = 0;
-  let indexed = 0;
-  for (const [i, f] of found.entries()) {
-    const key = `${f.project}/${f.session}`;
-    const hit = cache[key];
-    if (hit && hit.bytes === f.st.size && hit.mtime === f.st.mtimeMs) {
-      entries[key] = hit;
-      cached++;
-    } else {
-      try {
-        entries[key] = await sessionStatsFor(f.project, f.session, f.path, f.st);
-        indexed++;
-      } catch {
-        continue; // a file that will not index is left out rather than fatal
-      }
-    }
-    onProgress?.(i + 1, found.length, indexed, cached);
-  }
+  // The iteration, the freshness rule and the record itself all live in
+  // lib/session-index.ts, shared with the browser. Only where the bytes come
+  // from differs.
+  const { buildSessionIndex, byRecency } = await import("../lib/session-index.ts");
+  const built = await buildSessionIndex(
+    found.map((f) => ({
+      project: f.project,
+      session: f.session,
+      bytes: f.st.size,
+      mtime: f.st.mtimeMs,
+      index: () => indexTranscript(f.session, f.path),
+    })),
+    cache,
+    onProgress,
+  );
 
   // Written before the agent lists are attached, on purpose: the cache is keyed
   // by the transcript's own size and mtime, and a subagent file can appear or
   // change without either moving. Anything that can go stale that way is
   // recomputed on every build instead.
-  await writeCache(entries);
-  const sessions = Object.values(entries).sort((a, b) => b.mtime - a.mtime);
+  await writeCache(built.entries);
+  const sessions = byRecency(built.entries);
   for (const s of sessions) s.agents = await listAgents(s.project, s.session);
-  return { sessions, cached, indexed };
+  return { sessions, cached: built.cached, indexed: built.indexed };
 }
 
 // ---------------------------------------------------------------- printing
