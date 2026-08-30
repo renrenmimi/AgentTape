@@ -157,6 +157,12 @@ export default function EmptyState({
           </div>
         )}
 
+        <p className="lede-cta lede-read">
+          No transcript to hand? <a href="/format">Read what a Claude Code transcript actually
+          is</a> — the file format, and the four things about it that are not what you would
+          guess. Nobody else appears to have written it down.
+        </p>
+
         <div className="privacy">
           <b>Your transcripts never leave this machine.</b> Parsing runs in the browser, on the
           file you point at. There is no upload, no account and no backend that receives

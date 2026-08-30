@@ -28,6 +28,7 @@ import {
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
 import { contextProfile, sessionStats } from "./lib/stats.ts";
 import { markdownReport, sparkline } from "./lib/report.ts";
+import { headings, parseInline, parseMarkdown, plainText, slugify } from "./lib/md.ts";
 import {
   DEFAULT_RULES, RULES_FORMAT, checkAll, checkRule, parseRule, parseRuleSet,
   ruleLabel, serializeRuleSet, tally,
@@ -1194,6 +1195,59 @@ for (const [what, re] of [
 ]) {
   ok(re.test(fmt), "the format reference states: " + what);
 }
+// The reference is rendered from the file, not from a second copy of the prose.
+// A module holding the same words would be a second thing to keep true, and one
+// of the two would rot.
+const fmtPage = read("app/format/page.tsx");
+ok(existsSync(join(root, "app/format/page.tsx")), "the format reference has a page");
+ok(/docs", "format-notes\.md"/.test(fmtPage) || /format-notes\.md/.test(fmtPage),
+  "…which renders the canonical file rather than a copy of it");
+ok(Object.keys(pkg.dependencies).length === 3, "still three runtime dependencies",
+  Object.keys(pkg.dependencies).join(","));
+ok(!/marked|markdown-it|remark|micromark|mdx/i.test(JSON.stringify(pkg)),
+  "…and none of them is a Markdown library");
+
+// The reader itself, against the file it exists for.
+{
+  const blocks = parseMarkdown(fmt);
+  const kinds = new Set(blocks.map((b) => b.b));
+  for (const k of ["heading", "para", "code", "table", "list", "hr"]) {
+    ok(kinds.has(k), "the reader produces a " + k + " from the reference");
+  }
+  const h2 = headings(blocks).filter((h) => h.level === 2);
+  ok(h2.length >= 10, "…and a contents list from its sections", String(h2.length));
+  ok(new Set(h2.map((h) => h.slug)).size === h2.length, "…whose anchors are unique");
+
+  const table = blocks.find((b) => b.b === "table");
+  ok(table.head.length >= 3 && table.rows.length >= 5, "a table keeps its head and its rows",
+    `${table.head.length} columns, ${table.rows.length} rows`);
+  const code = blocks.filter((b) => b.b === "code");
+  ok(code.every((c) => !c.text.includes("```")), "a fence never leaks into its own body");
+
+  // Nothing may render as raw markup, which is the whole failure mode of a
+  // hand-written reader.
+  const flat = blocks.map((b) =>
+    b.b === "code" ? "" :
+    b.b === "table" ? [...b.head, ...b.rows.flat()].map(plainText).join(" ") :
+    b.b === "list" ? b.items.map(plainText).join(" ") :
+    b.b === "hr" ? "" : plainText(b.text)).join("\n");
+  for (const marker of ["**", "```", "| --- |"]) {
+    ok(!flat.includes(marker), `no raw "${marker}" survives into the rendered text`);
+  }
+
+  // Code spans win over emphasis, which is the case this document is full of.
+  const spans = parseInline("a `**not bold**` and **bold** and *em* and [x](y)");
+  ok(spans.find((n) => n.t === "code")?.v === "**not bold**",
+    "asterisks inside a code span stay asterisks");
+  ok(spans.some((n) => n.t === "strong") && spans.some((n) => n.t === "em"),
+    "…while emphasis outside one still works");
+  ok(spans.find((n) => n.t === "link")?.href === "y", "…and a link keeps its target");
+  ok(plainText(parseInline("`a` **b** *c*")) === "a b c", "plain text strips the markers");
+  ok(slugify("usage — assistant records only") === "usage-assistant-records-only",
+    "a heading becomes a usable anchor", slugify("usage — assistant records only"));
+  ok(parseMarkdown("").length === 0, "an empty document produces nothing");
+}
+
 ok(/rules\.md/.test(readme), "the README points at the rule-set format");
 ok(/format-notes\.md/.test(readme), "…and at the transcript format");
 
@@ -1208,6 +1262,13 @@ const files = [];
     else files.push(p);
   }
 })(root);
+
+const proseCopies = files
+  .map((f) => f.replace(root, ""))
+  .filter((f) => /\.(ts|tsx)$/.test(f) && readFileSync(join(root, f), "utf8")
+    .includes("A line is one content"));
+ok(proseCopies.length === 0, "no TypeScript module holds a second copy of the prose",
+  proseCopies.join(", "));
 
 ok(!files.some((f) => f.endsWith(".jsonl")), "no .jsonl file is present in the tree",
   files.filter((f) => f.endsWith(".jsonl")).join(","));
