@@ -1829,6 +1829,26 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // promise and never for a frame count.
   ok(/const until = async/.test(st) && /const quiet = async/.test(st),
     "the suite can wait on an observable consequence, and on quiescence");
+
+  // An uncaught error used to be silent. Both of last round's real defects
+  // were uncaught TypeErrors and the score did not move by one when they were
+  // fixed — 141 before, 141 after. One assertion over a collected list would
+  // have caught both without anybody writing a test for either.
+  ok(/addEventListener\("error"/.test(st) && /addEventListener\("unhandledrejection"/.test(st),
+    "the suite collects what the page threw and what it failed to settle");
+  ok(/console\.error = \(/.test(st), "…and what it logged as an error");
+  ok(/TRAP\.threw\.length === 0/.test(st) && /TRAP\.logged\.length === 0/.test(st),
+    "…and fails on any of it");
+  ok(/armErrorTrap\(\);/.test(read("app/page.tsx")),
+    "…armed before the suite starts, so a throw during first render is caught too");
+
+  // An allowlist is how a check stops being a check. This one is empty; if it
+  // ever is not, every entry has to say what it is and why it is unavoidable.
+  const allowFrom = st.indexOf("ALLOWED_CONSOLE") ;
+  const allow = st.slice(st.indexOf("= [", allowFrom), st.indexOf("];", allowFrom));
+  const entries = (allow.match(/\{\s*why:/g) ?? []).length;
+  const whys = (allow.match(/why:\s*"[^"]{12,}"/g) ?? []).length;
+  ok(entries === whys, "every console-error exemption says what it is", `${entries} entries, ${whys} explained`);
   ok(/await until\(\) =>/.test(st) === false && (st.match(/await until\(/g) ?? []).length >= 8,
     "…and does so in the places a fixed frame count used to be",
     String((st.match(/await until\(/g) ?? []).length));

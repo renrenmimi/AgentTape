@@ -38,7 +38,7 @@ import Shortcuts from "./shortcuts";
 import Overview from "./overview";
 import NestedWorkbench from "./nested-workbench";
 import FilterBar from "./filter-bar";
-import { runSelfTest } from "./selftest";
+import { armErrorTrap, runSelfTest } from "./selftest";
 
 const LEGEND_KINDS = ["user", "text", "thinking", "tool-call", "tool-result", "system"] as const;
 
@@ -659,6 +659,9 @@ export default function Page() {
     };
     (window as unknown as Record<string, unknown>).__agenttape = api;
     if (!selftest) return;
+    // Armed before the suite starts, and idempotent, so a throw during the
+    // first render is collected rather than missed.
+    armErrorTrap();
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
   }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting,

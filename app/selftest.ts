@@ -43,6 +43,49 @@ type Api = {
   setRules: (r: unknown[]) => void;
 };
 
+/**
+ * Everything the page threw or logged as an error, for the whole run.
+ *
+ * Nothing in this suite used to fail when the page threw. Last round two real
+ * defects were found and fixed — both keyboard handlers cast `e.target` to an
+ * element when a programmatic keydown arrives with `window` as its target,
+ * killing the handler with an uncaught TypeError — and **the score did not
+ * move**: 141 before, 141 after. Two genuine bugs, invisible to a
+ * 159-assertion suite and doubly invisible to CI.
+ *
+ * One assertion over this array would have caught both without anybody writing
+ * a test for either. That is the whole argument for it.
+ */
+const TRAP: { threw: string[]; logged: string[] } = { threw: [], logged: [] };
+let armed = false;
+
+/**
+ * An error that React or Next emits unavoidably and that says nothing about
+ * this application. Every entry has to name what it is, because an allowlist
+ * is how a check stops being a check — and this one is empty until something
+ * forces it not to be.
+ */
+const ALLOWED_CONSOLE: { why: string; re: RegExp }[] = [];
+
+/** Called before the suite starts, so a throw during first render is caught too. */
+export function armErrorTrap(): void {
+  if (armed) return;
+  armed = true;
+  window.addEventListener("error", (e) => {
+    TRAP.threw.push(`${e.message} (${e.filename?.split("/").pop() ?? "?"}:${e.lineno})`);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = (e as PromiseRejectionEvent).reason;
+    TRAP.threw.push("unhandled rejection: " + (r instanceof Error ? r.message : String(r)));
+  });
+  const real = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    const text = args.map((x) => (x instanceof Error ? x.message : String(x))).join(" ");
+    if (!ALLOWED_CONSOLE.some((a) => a.re.test(text))) TRAP.logged.push(text.slice(0, 200));
+    real(...args);
+  };
+}
+
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
 
 /** The demo tape's own length, so "is the demo loaded" is a fact, not a guess. */
@@ -205,7 +248,7 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 163;
+const DECLARED_ASSERTIONS = 167;
 
 export async function runSelfTest(): Promise<void> {
   const results: { ok: boolean; label: string; note?: string; skipped?: boolean }[] = [];
@@ -244,6 +287,47 @@ export async function runSelfTest(): Promise<void> {
     ok(false, "the suite ran to the end without throwing",
       e instanceof Error ? e.message : String(e));
   }
+
+  // ---- what no block was looking for --------------------------------------
+  //
+  // Two classes that every block above would sail past. Neither is about a
+  // feature; both are about the page being wrong in a way that reads as
+  // plausible on a screenshot.
+  {
+    await need("what no block was looking for");
+
+    // A formatting bug reaches the screen as a word. `undefined`, `NaN` and
+    // `[object Object]` are the three that mean a value did not survive the
+    // trip, and nothing in this suite reads rendered text looking for them.
+    const junk = /\bundefined\b|\bNaN\b|\[object Object\]/;
+    const guilty: string[] = [];
+    for (const el of document.querySelectorAll<HTMLElement>(".pane-body *, .summary-strip *")) {
+      if (el.children.length) continue; // leaves only, so a parent is not blamed twice
+      const t = (el.textContent ?? "").trim();
+      if (t && junk.test(t)) guilty.push(el.className + ": " + t.slice(0, 40));
+    }
+    ok(guilty.length === 0, "no rendered text is a value that did not survive the trip",
+      [...new Set(guilty)].slice(0, 3).join(" · "));
+
+    // The detail panel and the playhead can disagree without any assertion
+    // above noticing: every one of them reads the panel and trusts that it is
+    // showing the step the playhead is on.
+    const at = 7;
+    api().setPos(at);
+    await until(() => api().pos === at, 60);
+    const heading = ([...document.querySelectorAll('section[aria-label="Step detail"] .pane-head h2')]
+      .map((e) => (e.textContent ?? "").trim())[0] ?? "");
+    const want = api().view?.steps[at];
+    ok(!!want && new RegExp(`\\b${(want.i + 1).toLocaleString("en-US")}\\b`).test(heading),
+      "the step detail is showing the step the playhead is on",
+      `heading "${heading}" for step ${(want?.i ?? -1) + 1}`);
+  }
+
+  // Last, so it covers everything above it.
+  ok(TRAP.threw.length === 0, "nothing threw or rejected during the whole run",
+    [...new Set(TRAP.threw)].slice(0, 3).join(" · "));
+  ok(TRAP.logged.length === 0, "…and nothing was logged as a console error",
+    [...new Set(TRAP.logged)].slice(0, 3).join(" · "));
 
   ok(results.length + 1 === DECLARED_ASSERTIONS,
     "the suite ran every assertion it declares",
