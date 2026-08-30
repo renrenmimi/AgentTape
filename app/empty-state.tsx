@@ -9,6 +9,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fmtBytes, fmtDuration, fmtInt } from "@/lib/summary";
 
+export type HelperAgent = {
+  id: string;
+  bytes: number;
+  /** The parent tool_use id, from the sidecar. Empty when there is no sidecar. */
+  toolUseId: string;
+  agentType: string;
+};
+
 export type HelperSession = {
   project: string;
   session: string;
@@ -16,9 +24,11 @@ export type HelperSession = {
   lines: number;
   tools: number;
   mtime: number;
+  /** Subagent transcripts beside this session. */
+  agents: HelperAgent[];
 };
 
-const HELPER = "http://127.0.0.1:4319";
+export const HELPER = "http://127.0.0.1:4319";
 
 // Probing a port nothing is listening on logs net::ERR_CONNECTION_REFUSED in
 // red, at the network layer, before any JavaScript sees it — a .catch() cannot
@@ -46,8 +56,9 @@ function rememberHelper(seen: boolean): void {
 }
 
 type Props = {
-  onFile: (file: File) => void;
-  onHelperPick: (url: string, label: string) => void;
+  /** Several at once: a transcript plus the agent-*.jsonl files beside it. */
+  onFiles: (files: File[]) => void;
+  onHelperPick: (session: HelperSession) => void;
   onDemo: () => void;
   progress: { pct: number; lines: number; label: string } | null;
   error: string;
@@ -58,7 +69,7 @@ function isLocal(): boolean {
   return location.hostname === "localhost" || location.hostname === "127.0.0.1";
 }
 
-export default function EmptyState({ onFile, onHelperPick, onDemo, progress, error }: Props) {
+export default function EmptyState({ onFiles, onHelperPick, onDemo, progress, error }: Props) {
   const [over, setOver] = useState(false);
   const [sessions, setSessions] = useState<HelperSession[] | null>(null);
   const [helperErr, setHelperErr] = useState("");
@@ -82,7 +93,8 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
     fetch(HELPER + "/sessions", { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j) => {
-        setSessions(Array.isArray(j.sessions) ? j.sessions : []);
+        const list = Array.isArray(j.sessions) ? j.sessions : [];
+        setSessions(list.map((x: HelperSession) => ({ ...x, agents: x.agents ?? [] })));
         rememberHelper(true);
       })
       .catch(() => {
@@ -104,10 +116,10 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
 
   const take = useCallback(
     (files: FileList | null) => {
-      const f = files?.[0];
-      if (f) onFile(f);
+      const list = files ? [...files] : [];
+      if (list.length) onFiles(list);
     },
-    [onFile],
+    [onFiles],
   );
 
   return (
@@ -126,6 +138,10 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
           onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files); }}
         >
           Drop a <code>.jsonl</code> transcript or a <code>.tape.json</code> here
+          <span className="dropzone-sub">
+            several at once is fine — add the <code>agent-*.jsonl</code> files beside a session
+            and the delegated runs are attached too
+          </span>
         </div>
 
         {progress && (
@@ -150,6 +166,7 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
           <input
             ref={input}
             type="file"
+            multiple
             accept=".jsonl,.json"
             className="sr-only"
             aria-label="Choose a transcript file"
@@ -182,16 +199,14 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
                 type="button"
                 className="session-row"
                 key={s.project + "/" + s.session}
-                onClick={() =>
-                  onHelperPick(
-                    `${HELPER}/file?project=${encodeURIComponent(s.project)}&session=${encodeURIComponent(s.session)}`,
-                    s.session.slice(0, 8),
-                  )
-                }
+                onClick={() => onHelperPick(s)}
               >
                 <span className="proj">{s.project}</span>
                 <span className="meta">{s.session.slice(0, 8)}</span>
-                <span className="meta">{fmtBytes(s.bytes)} · {fmtInt(s.lines)} lines · {fmtInt(s.tools)} tools</span>
+                <span className="meta">
+                  {fmtBytes(s.bytes)} · {fmtInt(s.lines)} lines · {fmtInt(s.tools)} tools
+                  {s.agents?.length ? ` · ${fmtInt(s.agents.length)} subagents` : ""}
+                </span>
                 <span className="meta">{fmtDuration(Date.now() - s.mtime)} ago</span>
               </button>
             ))}

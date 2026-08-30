@@ -48,6 +48,18 @@ export function KindGlyph({ kind, size = 11 }: { kind: StepKind; size?: number }
   );
 }
 
+/** A tool call that handed the work to somebody else. */
+export function DelegateGlyph({ size = 11 }: { size?: number }) {
+  const c = size / 2;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden focusable="false">
+      <path d={`M${c} ${c - 1.2} L${c + 3.6} ${c + 4} L${c - 3.6} ${c + 4} Z`} fill="currentColor" />
+      <path d={`M${c} ${c - 4.6} V${c - 2}`} stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
+      <circle cx={c} cy={c - 5} r={1.3} fill="currentColor" />
+    </svg>
+  );
+}
+
 export function FailGlyph({ size = 11 }: { size?: number }) {
   const c = size / 2;
   return (

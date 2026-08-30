@@ -27,6 +27,7 @@ type Api = {
   matches: number;
   mask: Uint8Array;
   seekNext: (dir: 1 | -1) => void;
+  delegations: { step: number; run: unknown }[];
 };
 
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
@@ -36,6 +37,25 @@ const settle = async (n = 3) => { for (let i = 0; i < n; i++) await frame(); };
 
 function api(): Api {
   return (window as unknown as Record<string, Api>).__agenttape;
+}
+
+/** A tape with a delegation in it, so the absent-work state can be asserted. */
+function tapeWithDelegation(): TapeFile {
+  const t0 = Date.parse("2026-03-03T10:00:00Z");
+  const steps: TapeStep[] = [
+    { k: "user", y: "user", r: "user", ts: t0, c: 20, b: 0, p: "start", x: 1000 },
+    { k: "tool-call", y: "assistant", r: "assistant", m: "m1", d: "claude-opus-5",
+      n: "Agent", u: "toolu_selftest_one", ts: t0 + 5000, c: 40, b: 0, p: "delegated work", x: 1200 },
+    { k: "tool-result", y: "user", r: "user", u: "toolu_selftest_one",
+      ts: t0 + 60000, c: 80, b: 0, p: "summary came back", x: 1400 },
+    { k: "text", y: "assistant", r: "assistant", m: "m2", d: "claude-opus-5",
+      ts: t0 + 62000, c: 30, b: 0, p: "done", x: 1500 },
+  ];
+  return {
+    format: TAPE_FORMAT, redacted: false, label: "selftest delegation",
+    session: { id: "", bytes: 0, lines: steps.length, badLines: 0, versions: [] },
+    fields: {}, steps,
+  };
 }
 
 /** A tape big enough that a list which is not virtualised will show it. */
@@ -179,6 +199,41 @@ export async function runSelfTest(): Promise<void> {
     }
   } else {
     ok(false, "the demo tape contains at least one failed step");
+  }
+
+  // ---- delegated work is visible even with no subagent file ---------------
+  {
+    api().loadTapeFile(tapeWithDelegation());
+    await settle(6);
+    const dels = api().delegations;
+    ok(dels.length === 1, "the Agent call is found as a delegation", `${dels.length}`);
+    ok(dels[0].run === null, "…with no run attached");
+
+    const stat = [...document.querySelectorAll(".stat")]
+      .map((e) => (e.textContent ?? "").trim())
+      .find((t) => t.startsWith("delegated"));
+    ok(!!stat && /not in this file/.test(stat),
+      "the header says work happened that this file does not contain", stat ?? "missing");
+
+    api().setPos(1);
+    await settle(4);
+    ok(!!document.querySelector(".nested-absent"), "a delegated step shows the absent-work panel");
+    const note = (document.querySelector(".nested-absent .nested-note")?.textContent ?? "").trim();
+    ok(/not in this file/i.test(note), "…and says so in words", note.slice(0, 60));
+    ok(/subagents\/agent-/.test(note), "…and says where the work actually lives");
+    const chip = [...document.querySelectorAll(".d-kind")].map((e) => (e.textContent ?? "").trim());
+    ok(chip.includes("delegated"), "the step detail marks the step as a delegation", chip.join(","));
+
+    const legend = [...document.querySelectorAll(".legend-item")].map((e) => (e.textContent ?? "").trim());
+    ok(legend.some((t) => /delegated/.test(t)), "the timeline legend gains a delegation shape",
+      legend.join(" | "));
+
+    api().setPos(0);
+    await settle(3);
+    ok(!document.querySelector(".nested-absent"), "an ordinary step shows no delegation panel");
+
+    await a.onDemo();
+    await settle(6);
   }
 
   // ---- the context jump is attributed, not just marked --------------------
