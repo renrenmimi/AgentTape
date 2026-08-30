@@ -1790,9 +1790,9 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(!!declared, "the in-page suite declares how many assertions it runs");
   ok(Number(declared?.[1]) > 100, "…and the number is the real one, not a placeholder",
     declared?.[1] ?? "missing");
-  ok(/results\.length \+ 1 === DECLARED_ASSERTIONS/.test(st),
-    "…and compares it against what actually ran");
-  ok(/expected: DECLARED_ASSERTIONS/.test(st),
+  ok(/results\.length \+ 1 === want\.total/.test(st),
+    "…and compares it against what actually ran, for the mode it ran in");
+  ok(/expected: DECLARED\[MODE\]\.total/.test(st),
     "…and hands it to a driver, so CI can fail on a short run too");
 
   // One exit. The bail-out for "no tape loaded" used to report by itself and
@@ -1816,6 +1816,34 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // a machine without one, 163 with. Asserted through the shared label list.
   ok(/for \(const label of L\) skip\(label, why\)/.test(st),
     "the helper-dependent block emits one label list either way");
+
+  // Two modes, each with a frozen shape. The block used to probe for a helper
+  // and adapt, so the suite behaved differently depending on what happened to
+  // be running on the machine — which is not something a gate can be built on,
+  // and next round this becomes a gate on a runner where the helper is never
+  // up. The driver decides now, and each mode declares what it produces.
+  ok(/const HELPER_MODE =/.test(st) && /has\("helper"\)/.test(st),
+    "the page is told which mode to run in rather than probing for one");
+  ok(!/const reachable = await fetch/.test(st),
+    "…and no longer decides by looking at what is listening");
+  const modes = st.slice(st.indexOf("const DECLARED: Record"), st.indexOf("};", st.indexOf("const DECLARED: Record")));
+  ok(/"no-helper": \{ total: DECLARED_ASSERTIONS, skipped: 4 \}/.test(modes) &&
+     /"helper": \{ total: DECLARED_ASSERTIONS, skipped: 0 \}/.test(modes),
+    "…and both modes declare a total and a skip count", modes.replace(/\s+/g, " ").slice(0, 90));
+  ok(/skipped exactly the assertions this mode skips/.test(st),
+    "…and a skip that appears where the mode does not declare one is a failure");
+  ok(/mode: MODE/.test(st) && /expectedSkips: DECLARED\[MODE\]\.skipped/.test(st),
+    "…and the mode and its declared shape reach the driver");
+
+  const drv2 = read("scripts/selftest.mjs");
+  ok(/--helper/.test(drv2) && /helper=1/.test(drv2),
+    "the driver can ask for the helper mode");
+  ok(/nothing is answering on 127\.0\.0\.1:4319/.test(drv2),
+    "…and refuses up front when nothing would answer, rather than skipping quietly");
+  ok(/res\.mode !== \(HELPER \? "helper" : "no-helper"\)/.test(drv2),
+    "…and fails if the page ran in a different mode from the one it asked for");
+  ok(/res\.skipped !== res\.expectedSkips/.test(drv2),
+    "…and fails on a skip count the mode does not declare");
 
   // Every block says what it starts from, so a block that starts wrong fails
   // once by name instead of eighteen times by symptom.

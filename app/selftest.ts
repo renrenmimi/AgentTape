@@ -333,7 +333,30 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 167;
+const DECLARED_ASSERTIONS = 168;
+
+/**
+ * Which mode the run is in, and what that mode is supposed to produce.
+ *
+ * The overview block needs the local helper. It used to decide for itself by
+ * probing 127.0.0.1:4319 — so on a machine with a helper running it exercised
+ * four assertions, and on one without it skipped them, and *the suite behaved
+ * differently depending on what happened to be running on the box*. That is not
+ * something a gate can be built on, and next round this number becomes a gate
+ * on a runner where the helper will never be up.
+ *
+ * So the driver decides, with `?helper=1`, and each mode declares what it
+ * produces. Two modes with two frozen shapes is honest; one shape that quietly
+ * changes is not. Asking for the helper mode without a helper is a failure
+ * rather than a skip: the mode was requested and could not be delivered.
+ */
+const HELPER_MODE =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).has("helper");
+const MODE = HELPER_MODE ? "helper" : "no-helper";
+const DECLARED: Record<string, { total: number; skipped: number }> = {
+  "no-helper": { total: DECLARED_ASSERTIONS, skipped: 4 },
+  "helper": { total: DECLARED_ASSERTIONS, skipped: 0 },
+};
 
 /**
  * One run per page load, belt as well as braces.
@@ -425,9 +448,15 @@ export async function runSelfTest(): Promise<void> {
   ok(TRAP.logged.length === 0, "…and nothing was logged as a console error",
     [...new Set(TRAP.logged)].slice(0, 3).join(" · "));
 
-  ok(results.length + 1 === DECLARED_ASSERTIONS,
-    "the suite ran every assertion it declares",
-    `${results.length + 1} ran, ${DECLARED_ASSERTIONS} declared`);
+  const want = DECLARED[MODE];
+  // Skips first, so the count assertion below is the last thing pushed and can
+  // still say `results.length + 1` about the finished total.
+  ok(results.filter((r) => r.skipped).length === want.skipped,
+    "the run skipped exactly the assertions this mode skips",
+    `${results.filter((r) => r.skipped).length} skipped, ${want.skipped} declared for ${MODE}`);
+  ok(results.length + 1 === want.total,
+    "…and ran every assertion it declares",
+    `${results.length + 1} ran, ${want.total} declared for ${MODE}`);
   report(results);
 }
 
@@ -1252,12 +1281,8 @@ async function runBlocks(
   // ---- the overview, if the helper is answering ---------------------------
   {
     await need("the overview, if the helper is answering");
-    const reachable = await fetch("http://127.0.0.1:4319/health")
-      .then((r) => r.ok)
-      .catch(() => false);
-
-    // Four labels either way. Whether the helper is running changes whether
-    // they are answered, never how many there are.
+    // Four labels either way. The mode decides whether they are answered,
+    // never how many there are.
     const L = [
       "the helper returns session statistics",
       "no session record carries a string but its identifiers and its vocabulary",
@@ -1265,9 +1290,14 @@ async function runBlocks(
       "…and the counts the table sorts by",
     ] as const;
 
-    if (!reachable) {
-      const why = "the local helper is not running on 127.0.0.1:4319";
+    if (!HELPER_MODE) {
+      const why = "run without ?helper=1, so the helper path was not exercised";
       for (const label of L) skip(label, why);
+    } else if (!(await fetch("http://127.0.0.1:4319/health").then((r) => r.ok).catch(() => false))) {
+      // Requested and not delivered. A skip here would let a gate pass on a
+      // machine where the thing it is gating never ran.
+      const why = "?helper=1 was asked for and nothing answered on 127.0.0.1:4319";
+      for (const label of L) ok(false, label, why);
     } else {
       const res = await fetch("http://127.0.0.1:4319/overview").then((r) => r.json());
       const rows = res.sessions ?? [];
@@ -1329,11 +1359,13 @@ function report(results: { ok: boolean; label: string; note?: string; skipped?: 
   // Skipped sits in the denominator and outside the pass count, the same way
   // a vacuous rule does in `agenttape check`. "Nothing violated this" and
   // "this was never tested" are different facts and are reported as two.
-  const head = `AgentTape self-test — ${pass}/${results.length} passed, ` +
+  const head = `AgentTape self-test [${MODE}] — ${pass}/${results.length} passed, ` +
     `${fail} failed, ${skipped} not run here`;
   const text = head + "\n\n" + lines.join("\n");
   (window as unknown as Record<string, unknown>).__selftest = {
-    pass, fail, skipped, total: results.length, expected: DECLARED_ASSERTIONS, results,
+    pass, fail, skipped, total: results.length,
+    mode: MODE, expected: DECLARED[MODE].total, expectedSkips: DECLARED[MODE].skipped,
+    results,
   };
   document.title = `selftest ${pass}/${results.length}`;
   const pre = document.createElement("pre");

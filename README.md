@@ -508,6 +508,15 @@ install rather than as a race, which is why it cost three rounds before it was
 fixed; [`docs/build-directories.md`](docs/build-directories.md) is the paragraph
 that would have saved them.
 
+**The in-page suite has two modes and freezes both.** By default the four
+assertions that need the local helper come back marked *not run here* — counted
+in the denominator, outside the pass count, the way `agenttape check` treats a
+vacuous rule. `npm run selftest -- --helper` asks for the other mode, and is
+refused up front if nothing is answering on `127.0.0.1:4319`. Each mode declares
+its total and its skip count, and a skip appearing where the mode does not
+declare one is a failure: a suite that behaves differently depending on what
+happens to be running on the machine cannot gate anything.
+
 **CI does not run the in-page suite, and it has already cost something.**
 `node verify.mjs` and a production build run on every push; the browser
 assertions at `?selftest=1` need a browser driving a running server, and are
