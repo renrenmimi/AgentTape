@@ -1274,7 +1274,12 @@ ok(/rules\.md/.test(readme), "the README points at the rule-set format");
 ok(/format-notes\.md/.test(readme), "…and at the transcript format");
 
 // walk every source file we ship
-const skip = new Set(["node_modules", ".next", ".git", "out"]);
+// Build output, not source. Both directories, because splitting the dev build
+// out of `.next` immediately put a second one on disk and every privacy check
+// in this file started reporting Next's own bundles — which is the check
+// working, and a reminder that this list is part of the split rather than an
+// afterthought to it.
+const skip = new Set(["node_modules", ".next", ".next-dev", ".git", "out"]);
 const files = [];
 (function walk(dir) {
   for (const name of readdirSync(dir)) {
@@ -1910,6 +1915,45 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     "…including the cost, in the number it cost");
   ok(/scripts\/selftest\.mjs/.test(wf) && /round seven/.test(wf),
     "…and names the gap, the driver that closes it, and when");
+}
+
+// ---------------------------------------------------------------- one build directory each
+//
+// `next dev` and `next build` wrote to the same `.next`. A dev server left
+// running in another terminal rewrote it under a production build, and
+// `next start` then read half of one build and half of another and answered
+// every request with `Cannot find module './331.js'`. It cost three rounds,
+// twice diagnosed correctly and not fixed, because a rebuild is faster than a
+// fix until the third time.
+
+{
+  const cfg = read("next.config.mjs");
+  ok(cfg !== "", "there is a build configuration at all");
+  ok(/PHASE_DEVELOPMENT_SERVER/.test(cfg) && /distDir/.test(cfg),
+    "…and it chooses the build directory from the phase");
+  ok(/\.next-dev/.test(cfg), "…so development has one of its own");
+  // Build and start must agree, which they do by both being not-development.
+  // A config that named three directories would have reintroduced the bug in
+  // a new place.
+  const dirs = [...cfg.matchAll(/"(\.next[a-z-]*)"/g)].map((m) => m[1]);
+  ok(new Set(dirs).size === 2 && dirs.includes(".next") && dirs.includes(".next-dev"),
+    "…and there are exactly two, so build and start cannot be split apart",
+    dirs.join(", "));
+
+  ok((pkg.scripts ?? {}).prestart === "next build",
+    "starting a production server builds first, so it cannot read a half-written directory",
+    (pkg.scripts ?? {}).prestart ?? "missing");
+  ok(/^\.next-dev\/$/m.test(gitignore), "the development directory is ignored");
+  // Both build directories are build output, and this file walks source.
+  // Missing one turns every privacy check into a report about Next's bundles.
+  ok(skip.has(".next") && skip.has(".next-dev"),
+    "…and neither build directory is mistaken for source by this checker");
+
+  const bd = read("docs/build-directories.md");
+  ok(bd !== "", "the paragraph that would have saved three rounds is written down");
+  ok(/Cannot find module/.test(bd),
+    "…including the error it produces, since that is what somebody will search for");
+  ok(/docs\/build-directories\.md/.test(readme), "…and the README points at it");
 }
 
 // ---------------------------------------------------------------- did every check run
