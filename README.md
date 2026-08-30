@@ -77,6 +77,47 @@ Not sure yet? Press **Load demo tape** on the empty state. It is a fictional
 run, invented end to end, with two tool failures, a context blow-up and a
 38-minute idle gap in it.
 
+### Checking a run from the command line
+
+The one command worth learning, and the only one that needs no browser:
+
+```bash
+node bin/agenttape.mjs check examples/lenient.rules.json path/to/session.jsonl
+```
+
+**Node 22.18 or newer** — `check` reads the parser as TypeScript directly, and
+that stopped needing a flag in 22.18. Nothing to install and nothing on npm:
+clone the repository and run the file. `node bin/agenttape.mjs --help` prints
+the rest.
+
+It exits `0` when every rule held, `1` when one failed, `2` when the rule set or
+the tape could not be read — which is what lets it sit in a CI job and tell you
+the day your agent stopped searching before it wrote. Run with **no arguments at
+all** and it does something different: it lists your recent sessions and starts
+the loopback helper described above, so use `check` explicitly.
+
+Two rule sets to copy, in [`examples/`](examples/):
+
+| | |
+| --- | --- |
+| [`lenient.rules.json`](examples/lenient.rules.json) | A floor, not a standard: it ended broken, it looped, it hit a context wall, or a tool hung. Start here. |
+| [`strict.rules.json`](examples/strict.rules.json) | What a run you intend to trust looks like, including *read before edit* and *search before write*. |
+
+Both hold on a run that went well; on a run that did not, the strict set catches
+strictly more. That ordering is asserted in `verify.mjs` by running them, not by
+comparing the numbers in the files.
+
+When a rule fails, the output ends with a block delimited by `── copy from
+here ──`. It is Markdown, it names the rule, what happened and the step, and it
+carries no message text — every word in it was written by this program from a
+fixed vocabulary. Paste it into an issue as it stands. Add `--json` for the same
+result as a machine-readable object on stdout, with complaints kept on stderr.
+
+A redacted `.tape.json` checks exactly as the transcript it came from: no rule
+reads a message body. You can hand somebody a structure-only tape and they can
+check your expectations against it without ever seeing what was said. The full
+rule reference is [`docs/rules.md`](docs/rules.md).
+
 ## What it shows
 
 **A timeline**, one tick per step, with the shape encoding the kind of step —

@@ -1540,5 +1540,128 @@ for (const dir of new Set(advertised)) {
 ok(!/serveStatic|APP_ROOT/.test(helperCode),
   "the helper has one path-resolution surface, not two");
 
+
+// ---------------------------------------------------------------- the checker as somebody else's tool
+//
+// `agenttape check` is the one part of this that is meant to run in a stranger's
+// CI, on a machine nobody here will ever see. That makes three things
+// load-bearing: the help has to be true, the example rule sets have to be worth
+// copying, and the failure output has to be safe to paste somewhere public.
+
+const cliSrc = read("bin/agenttape.mjs");
+const helpBlock = cliSrc.slice(cliSrc.indexOf("const HELP = `"), cliSrc.indexOf("`;", cliSrc.indexOf("const HELP = `")));
+ok(helpBlock.includes("${NODE_MIN}") || /22\.18/.test(helpBlock),
+  "the help states the Node version, which is the first thing that stops somebody");
+ok(/npm/.test(helpBlock) && /clone/.test(helpBlock),
+  "…and says there is nothing to install, since nothing is published");
+ok(/--list|Ctrl-C|serve/.test(helpBlock),
+  "…and says what running it with no arguments does, which is not what you would guess");
+ok(/examples\//.test(helpBlock), "…and points at the example rule sets by path");
+
+// A rule set that does not parse is a rule set nobody can copy.
+const exampleRules = ["examples/lenient.rules.json", "examples/strict.rules.json"];
+const parsedExamples = {};
+for (const rel of exampleRules) {
+  const src = read(rel);
+  ok(src !== "", `${rel} exists`);
+  const { set, problems } = parseRuleSet(src);
+  ok(problems.length === 0, `${rel} parses with nothing to complain about`, problems.join("; "));
+  ok(set.rules.length > 0, `${rel} has rules in it`);
+  ok((set.note ?? "").length > 80,
+    `${rel} says when to reach for it, not just what is in it`);
+  parsedExamples[rel] = set;
+}
+
+// The two are only worth shipping as a pair if one is genuinely the stricter.
+// Asserted by running both, because "strict has a smaller number in it" is a
+// statement about the file and this is a statement about behaviour.
+{
+  const passing = tapeFromFile(JSON.parse(read("fixtures/passing.tape.json")));
+  const failing = tapeFromFile(JSON.parse(read("fixtures/failing.tape.json")));
+  const run = (set, tape) =>
+    tally(checkAll(tape.steps, set.rules, pairTools(tape.steps)));
+  const lenient = parsedExamples["examples/lenient.rules.json"];
+  const strict = parsedExamples["examples/strict.rules.json"];
+
+  ok(run(lenient, passing).fail === 0 && run(strict, passing).fail === 0,
+    "both example rule sets hold on a run that went well");
+  const lf = run(lenient, failing).fail;
+  const sf = run(strict, failing).fail;
+  ok(lf > 0, "the lenient set is not so lenient that it catches nothing", `caught ${lf}`);
+  ok(sf > lf, "…and the strict set catches strictly more on the same run", `${sf} vs ${lf}`);
+}
+
+// Every reason a step can be marked failed, as a closed vocabulary. This is the
+// invariant the paste block rests on: `errWhy` reaches the failure output, and
+// the failure output is meant for a public issue tracker. If a reason could
+// ever be built from a message, that block would leak on the day it mattered.
+{
+  const reasons = new Set();
+  const scan = (src) => {
+    for (const m of src.matchAll(/errWhy\s*[=:]\s*(.+?)[,;\n]/g)) reasons.add(m[1].trim());
+    for (const m of src.matchAll(/return\s+"([^"]+)";/g)) void m;
+  };
+  scan(read("lib/parser.ts"));
+  const computed = [...reasons].filter((r) => !/^(recErr|""|errWhy)$/.test(r));
+  const literal = computed.every((r) => /^"[a-z ]+"$/.test(r));
+  ok(literal, "every failure reason is a literal this program wrote, never a field it read",
+    computed.filter((r) => !/^"[a-z ]+"$/.test(r)).join(", "));
+
+  const recordErrorBody = read("lib/parser.ts").slice(
+    read("lib/parser.ts").indexOf("function recordError"),
+    read("lib/parser.ts").indexOf("const BLOCK_KIND"),
+  );
+  const returns = [...recordErrorBody.matchAll(/return\s+([^;]+);/g)].map((m) => m[1].trim());
+  // "" is the fifth: no error. It is a literal too.
+  ok(returns.every((r) => /^"[a-z ]*"$/.test(r)),
+    "…and recordError returns only such literals", returns.join(", "));
+}
+
+// Behavioural, because the two assertions above read source. A transcript in
+// which every text field is one marker, run through the checker's own output
+// path: the marker must not reach the paste block or the JSON.
+{
+  const MARK = "PASTEABLE" + "-MARKER-" + "7Q";
+  const at = (n) => new Date(Date.parse("2026-10-10T09:00:00Z") + n * 1000).toISOString();
+  const hostile = [
+    { type: "user", message: { role: "user", content: MARK }, timestamp: at(0), sessionId: MARK },
+    {
+      type: "assistant", timestamp: at(1), version: MARK,
+      message: {
+        role: "assistant", id: "msg_1", model: MARK,
+        content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: MARK } }],
+        usage: { input_tokens: 10, cache_read_input_tokens: 900_000 },
+      },
+    },
+    {
+      type: "user", timestamp: at(2), toolUseResult: MARK,
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu_1", is_error: true, content: MARK }],
+      },
+    },
+  ];
+  const ix = createIndexer("hostile");
+  hostile.forEach((r, i) => pushLine(ix, JSON.stringify(r), i, 1));
+  const { steps } = finishIndex(ix);
+  const results = checkAll(steps, parsedExamples["examples/strict.rules.json"].rules, pairTools(steps));
+
+  // Non-vacuous: the marker really was in the transcript, and rules really failed.
+  ok(hostile.some((r) => JSON.stringify(r).includes(MARK)), "the hostile transcript carries the marker");
+  const failed = results.filter((r) => !r.pass);
+  ok(failed.length > 0, "…and the strict set failed on it, so there is a paste block to check");
+
+  const asText = results.map((r) => r.label + " " + r.detail).join("\n");
+  ok(!asText.includes(MARK), "no rule result carries a word from the transcript");
+  ok(!JSON.stringify(results.map((r) => ({ l: r.label, d: r.detail, s: r.at }))).includes(MARK),
+    "…and neither does the JSON the --json flag prints");
+}
+
+// The README has to make the first minute work for somebody who has never seen
+// this: the version they need, and what happens if they just run it.
+ok(/22\.18/.test(readme), "the README states the Node version the checker needs");
+ok(/node bin\/agenttape\.mjs check /.test(readme), "…and gives the check command as one line");
+ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they can copy");
+
 console.log(`\n${checked - failed}/${checked} checks passed`);
 process.exit(failed ? 1 : 0);

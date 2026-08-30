@@ -1,0 +1,13 @@
+{
+  "format": "agenttape-rules/1",
+  "name": "strict",
+  "note": "What a run you intend to trust looks like. The two `before` rules are the ones worth arguing about: they say the agent looked before it wrote. If your agent legitimately writes files it has never read — a generator, a scaffolder — drop them rather than loosening them, because a rule that is true by accident is worse than no rule. The reference is docs/rules.md.",
+  "rules": [
+    {"kind": "ends-clean"},
+    {"kind": "max-repeats", "n": 3},
+    {"kind": "max-context", "n": 150000},
+    {"kind": "max-tool-seconds", "n": 60},
+    {"kind": "before", "first": "Read", "then": "Edit"},
+    {"kind": "before", "first": "Grep", "then": "Write"}
+  ]
+}

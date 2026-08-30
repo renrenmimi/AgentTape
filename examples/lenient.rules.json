@@ -1,0 +1,11 @@
+{
+  "format": "agenttape-rules/1",
+  "name": "lenient",
+  "note": "A floor, not a standard. These are the things that are wrong no matter what the run was doing: it ended broken, it got stuck in a loop, it hit a context wall, or a tool hung. Start here, watch it hold for a few weeks, then tighten one number at a time. Copy this file next to your code and edit it — the reference is docs/rules.md.",
+  "rules": [
+    {"kind": "ends-clean"},
+    {"kind": "max-repeats", "n": 12},
+    {"kind": "max-context", "n": 900000},
+    {"kind": "max-tool-seconds", "n": 600}
+  ]
+}

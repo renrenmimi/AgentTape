@@ -70,6 +70,54 @@ const value = (name, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 
+// `check` and `index` import the parser as TypeScript and rely on the type
+// stripping that stopped needing a flag in 22.18. Saying so beats letting Node
+// fail inside an import with a message about an unexpected token.
+const NODE_MIN = "22.18.0";
+function nodeIsOldEnough() {
+  const [a, b] = process.versions.node.split(".").map(Number);
+  return a > 22 || (a === 22 && b >= 18);
+}
+function requireNode(what) {
+  if (nodeIsOldEnough()) return;
+  console.error(
+    `\n  ${what} needs Node ${NODE_MIN} or newer — this is ${process.versions.node}.\n` +
+    `  It reads the parser as TypeScript, which older Node cannot do without a flag.\n` +
+    "  Everything else in this tool works on any Node 18.\n",
+  );
+  process.exit(2);
+}
+
+const HELP = `
+  agenttape — replay and check Claude Code sessions that already happened
+
+  Nothing here talks to the network. Every command reads files under
+  ~/.claude/projects and writes nothing but one cache file of its own.
+
+  agenttape check <rules.json> <tape>   check a run against stated expectations
+                                        exit 0 held · 1 failed · 2 unreadable
+      --json                            print the result as JSON instead
+      Both a .jsonl transcript and a redacted .tape.json work, and give the
+      same answer: no rule reads a message body. Example rule sets are in
+      examples/ — start with lenient.rules.json.
+
+  agenttape index                       build the cross-session statistics index
+      --json                            print it, for analysis
+
+  agenttape                             list recent sessions and serve them to
+                                        the page on 127.0.0.1 (Ctrl-C to stop)
+      --list                            list and exit, serving nothing
+      --all                             do not stop at the twenty most recent
+      --port N                          default ${DEFAULT_PORT}
+
+  agenttape --help                      this
+
+  Node ${NODE_MIN} or newer. There is no install step and nothing is published
+  to npm: clone the repository and run the file.
+
+  Full rule reference: docs/rules.md
+`;
+
 const PORT = Number(value("port", DEFAULT_PORT)) || DEFAULT_PORT;
 const LIMIT = flag("all") ? Infinity : Number(value("limit", 20)) || 20;
 
@@ -532,20 +580,63 @@ async function readTape(path) {
   return { steps, pairs: pairTools(steps), meta };
 }
 
-async function check(rulesPath, tapePath) {
+const CHECK_FORMAT = "agenttape-check/1";
+
+/**
+ * The block somebody pastes into an issue when a check fails in their CI.
+ *
+ * It is Markdown because that is what issue trackers eat, and it is built from
+ * the rule labels and the results — both of which are written by this program
+ * from a fixed vocabulary. No part of it comes from a message body, which is
+ * the property that makes it safe to paste somewhere public. The tape is named
+ * by its basename: a full path says where somebody keeps their work.
+ */
+function pasteBlock(results, t, set, tape, tapePath, rulesPath) {
+  const base = (x) => x.split("/").pop() ?? x;
+  const failed = results.filter((r) => !r.pass);
+  const out = [];
+  out.push(`**\`agenttape check\`** — ${failed.length} of ${results.length} ` +
+    `rule${results.length === 1 ? "" : "s"} failed on \`${base(tapePath)}\` ` +
+    `(${tape.steps.length.toLocaleString("en-US")} steps)` +
+    (set.name ? `, rule set \`${set.name}\`` : "") + ".");
+  out.push("");
+  out.push("| rule | what happened | step |");
+  out.push("| --- | --- | --- |");
+  for (const r of failed) {
+    out.push(`| ${r.label} | ${r.detail} | ${r.at >= 0 ? (r.at + 1).toLocaleString("en-US") : "—"} |`);
+  }
+  if (t.vacuous) {
+    out.push("");
+    out.push(`${t.vacuous} further rule${t.vacuous === 1 ? " had" : "s had"} nothing to check ` +
+      "in this run, which is not the same as holding.");
+  }
+  out.push("");
+  out.push(`Reproduce: \`node bin/agenttape.mjs check ${base(rulesPath)} ${base(tapePath)}\``);
+  out.push("");
+  out.push("Every rule reads the index — tool names, timings, token counts, error flags — " +
+    "and none reads a message body, so this block carries no transcript text.");
+  return out.join("\n");
+}
+
+async function check(rulesPath, tapePath, opts = {}) {
   const { parseRuleSet, checkAll, tally } = await import("../lib/assert.ts");
+  const asJson = !!opts.json;
+  // With --json the only thing on stdout is the JSON. Complaints go to stderr,
+  // so `agenttape check ... --json | jq` keeps working when the rule set is bad.
+  const say = asJson ? (m) => process.stderr.write(m + "\n") : (m) => console.log(m);
 
   let text;
   try {
     text = await readFile(rulesPath, "utf8");
   } catch (e) {
     console.error(`cannot read the rule set: ${e.message}`);
+    console.error("two to copy: examples/lenient.rules.json, examples/strict.rules.json");
     return 2;
   }
   const { set, problems } = parseRuleSet(text);
   for (const p of problems) console.error("  rule set: " + p);
   if (!set.rules.length) {
-    console.error("no usable rules — nothing to check");
+    console.error("no usable rules — nothing to check. The reference is docs/rules.md.");
     return 2;
   }
 
@@ -559,17 +650,43 @@ async function check(rulesPath, tapePath) {
 
   const results = checkAll(tape.steps, set.rules, tape.pairs);
   const t = tally(results);
-  const name = set.name ? ` · ${set.name}` : "";
 
-  console.log(`\n  ${tapePath.split("/").pop()} — ${tape.steps.length.toLocaleString("en-US")} steps${name}\n`);
+  if (asJson) {
+    console.log(JSON.stringify({
+      format: CHECK_FORMAT,
+      pass: t.fail === 0,
+      tape: { name: tapePath.split("/").pop(), steps: tape.steps.length },
+      ruleSet: { name: set.name || "", rules: set.rules.length },
+      tally: { held: t.pass - t.vacuous, failed: t.fail, vacuous: t.vacuous },
+      results: results.map((r) => ({
+        kind: r.rule.kind,
+        label: r.label,
+        pass: r.pass,
+        vacuous: r.vacuous,
+        detail: r.detail,
+        // One-based, to match what the page and the paste block show.
+        step: r.at >= 0 ? r.at + 1 : null,
+      })),
+    }));
+    return t.fail ? 1 : 0;
+  }
+
+  const name = set.name ? ` · ${set.name}` : "";
+  say(`\n  ${tapePath.split("/").pop()} — ${tape.steps.length.toLocaleString("en-US")} steps${name}\n`);
   for (const r of results) {
     const mark = r.pass ? (r.vacuous ? "    " : "ok  ") : "FAIL";
     const at = r.at >= 0 ? `  (step ${(r.at + 1).toLocaleString("en-US")})` : "";
-    console.log(`  ${mark}  ${r.label}`);
-    console.log(`        ${r.detail}${at}`);
+    say(`  ${mark}  ${r.label}`);
+    say(`        ${r.detail}${at}`);
   }
   const vac = t.vacuous ? `, ${t.vacuous} with nothing to check` : "";
-  console.log(`\n  ${t.pass - t.vacuous} held, ${t.fail} failed${vac}\n`);
+  say(`\n  ${t.pass - t.vacuous} held, ${t.fail} failed${vac}\n`);
+
+  if (t.fail) {
+    say("  ── copy from here " + "─".repeat(52));
+    say(pasteBlock(results, t, set, tape, tapePath, rulesPath));
+    say("  ── to here " + "─".repeat(59) + "\n");
+  }
 
   // The exit code is the point: it is what lets this sit in somebody's CI.
   return t.fail ? 1 : 0;
@@ -577,7 +694,21 @@ async function check(rulesPath, tapePath) {
 
 // ---------------------------------------------------------------- main
 
+if (!argv.length && !process.stdout.isTTY) {
+  // Piped with no arguments: almost certainly somebody expecting output, not
+  // somebody expecting a server. Say what the no-argument behaviour is rather
+  // than starting one into a pipe that will never be read.
+  console.log(HELP);
+  process.exit(0);
+}
+
+if (argv[0] === "help" || flag("help") || argv.includes("-h")) {
+  console.log(HELP);
+  process.exit(0);
+}
+
 if (argv[0] === "index") {
+  requireNode("agenttape index");
   const t0 = Date.now();
   let last = 0;
   const built = await buildIndex({
@@ -605,11 +736,18 @@ if (argv[0] === "index") {
 }
 
 if (argv[0] === "check") {
-  if (argv.length < 3) {
-    console.error("usage: agenttape check <rules.json> <tape.jsonl|tape.tape.json>");
+  requireNode("agenttape check");
+  const rest = argv.slice(1).filter((a) => !a.startsWith("--"));
+  if (rest.length < 2) {
+    console.error(
+      "\n  usage: agenttape check <rules.json> <tape.jsonl|tape.tape.json> [--json]\n\n" +
+      "  A rule set is plain JSON stating what the run was supposed to do.\n" +
+      "  Two to copy: examples/lenient.rules.json, examples/strict.rules.json\n" +
+      "  The reference is docs/rules.md. Exit 0 held, 1 failed, 2 unreadable.\n",
+    );
     process.exit(2);
   }
-  process.exit(await check(argv[1], argv[2]));
+  process.exit(await check(rest[0], rest[1], { json: flag("json") }));
 }
 
 const listing = await listSessions({ deep: LIMIT });
