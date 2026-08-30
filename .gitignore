@@ -15,3 +15,8 @@ fixtures/real/
 # Committed on purpose: invented runs, scrubbed to structure, so CI can
 # demonstrate the checker's exit code instead of the README claiming it.
 !fixtures/*.tape.json
+
+# A description of how one person works, computed from their own transcripts.
+# It contains no message text, but whether it is published is their call and
+# not this repository's default. verify.mjs asserts it stays untracked.
+docs/corpus-notes.md

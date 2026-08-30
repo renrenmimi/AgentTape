@@ -1235,6 +1235,26 @@ const committedTapes = files
   .filter((f) => f.endsWith(".tape.json"))
   .map((f) => f.replace(root, ""));
 ok(committedTapes.length > 0, "there are committed tapes to check", committedTapes.join(", "));
+
+// Corpus notes are a new class of artefact this round: derived from every
+// transcript on one machine, containing no message text but describing how one
+// person works. Whether that is published is their call, so the default is that
+// it is not — and the default has to be enforced rather than remembered.
+ok(/^docs\/corpus-notes\.md$/m.test(gitignore),
+  "the corpus notes are ignored by name");
+// The file may well be on disk — it is meant to be. What must be true is that
+// git is told to ignore it, which is checked above, and that nothing else in
+// the tree has copied it somewhere the ignore rule does not reach.
+const strayCorpus = files
+  .map((f) => f.replace(root, ""))
+  .filter((f) => /corpus-notes/.test(f) && f !== "docs/corpus-notes.md" && f !== "scripts/corpus-notes.mjs");
+ok(strayCorpus.length === 0, "…and no copy of them sits outside that path",
+  strayCorpus.join(", "));
+const corpusSrc = existsSync(join(root, "scripts/corpus-notes.mjs"))
+  ? readFileSync(join(root, "scripts/corpus-notes.mjs"), "utf8") : "";
+ok(corpusSrc !== "", "the script that produces them is committed, so the figures can be redone");
+ok(!/readFile|createReadStream|readdir|homedir/.test(corpusSrc),
+  "…and it opens nothing itself: it reads the statistics index on stdin and no more");
 for (const rel of committedTapes) {
   const raw = JSON.parse(readFileSync(join(root, rel), "utf8"));
   if (rel === "public/demo.tape.json") {
