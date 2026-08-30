@@ -850,6 +850,90 @@ input.filter-input { width: 260px; }
 
 .d-sec-head .spacer { margin-left: auto; }
 
+/* ---------- assertions ---------- */
+
+.asserts {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: var(--bg);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.btn-fail {
+  border-color: var(--risk);
+  color: var(--risk);
+  background: var(--risk-bg);
+  font-weight: 600;
+}
+
+.btn-fail:hover:not(:disabled) { border-color: var(--risk); background: var(--risk-bg); }
+
+.rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.rule {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-left-width: 2px;
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 8px 10px;
+}
+
+.rule-pass { border-left-color: var(--ok); }
+.rule-fail { border-left-color: var(--risk); background: var(--risk-bg); }
+.rule-vacuous { border-left-color: var(--text-3); }
+
+.rule-mark {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding-top: 6px;
+}
+
+.rule-pass .rule-mark { color: var(--ok); }
+.rule-fail .rule-mark { color: var(--risk); }
+.rule-vacuous .rule-mark { color: var(--text-3); }
+
+.rule-main { min-width: 0; display: grid; gap: 4px; }
+
+.rule-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.rule-edit .spacer { margin-left: auto; }
+
+.rule-num, .rule-tool { font-size: 11.5px; padding: 3px 7px; }
+.rule-tool { max-width: 220px; }
+
+.rule-detail {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.rule-fail .rule-detail { color: var(--risk); }
+.rule-dim { color: var(--text-3); }
+
+.rule-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
 /* ---------- compare two runs ---------- */
 
 .cmp {

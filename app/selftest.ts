@@ -30,6 +30,10 @@ type Api = {
   delegations: { step: number; run: unknown }[];
   setComparing: (b: boolean) => void;
   comparing: boolean;
+  setAsserting: (b: boolean) => void;
+  assertions: { pass: boolean; vacuous: boolean; at: number }[];
+  rules: unknown[];
+  setRules: (r: unknown[]) => void;
 };
 
 const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
@@ -236,6 +240,55 @@ export async function runSelfTest(): Promise<void> {
 
     await a.onDemo();
     await settle(6);
+  }
+
+  // ---- assertions ---------------------------------------------------------
+  {
+    const strip = [...document.querySelectorAll(".strip-actions button")]
+      .map((e) => (e.textContent ?? "").trim());
+    ok(strip.some((t) => /assertion/i.test(t)),
+      "the header reports whether the run holds its stated expectations", strip.join(" | "));
+
+    api().setAsserting(true);
+    await settle(5);
+    const panel = document.querySelector(".asserts");
+    ok(!!panel, "the assertions panel opens");
+    ok(panel?.getAttribute("role") === "dialog", "…as a dialog");
+
+    const rows = document.querySelectorAll(".rule").length;
+    ok(rows === api().assertions.length && rows > 0, "every rule gets a row", String(rows));
+    const marks = [...document.querySelectorAll(".rule-mark")].map((e) => (e.textContent ?? "").trim());
+    ok(marks.every((m) => m === "PASS" || m === "FAIL" || m === "—"),
+      "each row says pass or fail in words, not by colour alone", marks.join(","));
+    ok(document.querySelectorAll(".rule-detail").length === rows,
+      "…and each says why");
+
+    // A rule that must fail on the demo, with the offending step linked.
+    api().setRules([{ kind: "max-context", n: 1 }]);
+    await settle(5);
+    ok(document.querySelectorAll(".rule-fail").length === 1, "an impossible ceiling fails");
+    const go = document.querySelector<HTMLElement>(".rule-go");
+    ok(!!go && /^step \d/.test((go.textContent ?? "").trim()),
+      "…and links the offending step", go?.textContent ?? "missing");
+    go?.click();
+    await settle(5);
+    ok(!document.querySelector(".asserts"), "following the link closes the panel");
+    ok(!!document.querySelector(".track-hit"), "…and lands back on the workbench");
+
+    api().setAsserting(true);
+    await settle(4);
+    // A rule that cannot be tested is not a pass.
+    api().setRules([{ kind: "before", first: "NoSuchTool", then: "AlsoMissing" }]);
+    await settle(5);
+    ok(api().assertions[0].vacuous === true, "a rule with nothing to check is marked vacuous");
+    ok(document.querySelectorAll(".rule-vacuous").length === 1,
+      "…and shown differently from a pass");
+    ok(/nothing to check/.test(document.querySelector(".rule-detail")?.textContent ?? ""),
+      "…in words");
+
+    document.querySelector<HTMLElement>(".asserts .cmp-head .btn:last-of-type")?.click();
+    await settle(4);
+    ok(!document.querySelector(".asserts"), "the panel closes");
   }
 
   // ---- comparing two runs -------------------------------------------------
