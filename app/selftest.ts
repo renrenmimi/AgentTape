@@ -33,6 +33,8 @@ type Api = {
   setAsserting: (b: boolean) => void;
   setKeysOpen: (b: boolean) => void;
   keysOpen: boolean;
+  setInside: (n: number) => void;
+  attachSyntheticRun?: () => void;
   assertions: { pass: boolean; vacuous: boolean; at: number }[];
   rules: unknown[];
   setRules: (r: unknown[]) => void;
@@ -325,6 +327,54 @@ export async function runSelfTest(): Promise<void> {
     document.querySelector<HTMLElement>(".asserts .cmp-head .btn:last-of-type")?.click();
     await settle(4);
     ok(!document.querySelector(".asserts"), "the panel closes");
+  }
+
+  // ---- a delegated run can be stepped through -----------------------------
+  {
+    // A tape with a delegation, and a subagent run attached to it by hand, so
+    // the nested workbench has something to open without a file on disk.
+    api().loadTapeFile(tapeWithDelegation());
+    for (let i = 0; i < 40 && api().delegations.length !== 1; i++) await settle(1);
+    await settle(3);
+
+    api().setPos(1);
+    await settle(4);
+    const enter = [...document.querySelectorAll(".nested button")]
+      .find((b) => /step through/i.test(b.textContent ?? ""));
+    ok(!enter, "an unloaded delegation offers no way in");
+
+    api().attachSyntheticRun?.();
+    for (let i = 0; i < 40 && !api().delegations[0]?.run; i++) await settle(1);
+    await settle(3);
+    const enter2 = [...document.querySelectorAll(".nested button")]
+      .find((b) => /step through/i.test(b.textContent ?? "")) as HTMLElement | undefined;
+    ok(!!enter2, "a loaded delegation can be stepped through");
+
+    enter2?.click();
+    await settle(5);
+    const wb = document.querySelector(".nested-wb");
+    ok(!!wb, "the nested workbench opens");
+    ok(wb?.getAttribute("role") === "dialog", "…as a dialog");
+    ok(!!wb?.querySelector(".track-hit"), "…with a playhead of its own");
+    ok(!!wb?.querySelector(".vlist"), "…the messages the subagent accumulated");
+    ok(!!wb?.querySelector(".detail"), "…and its own step detail");
+    ok(!wb?.querySelector(".filters"), "…and none of the parent's filter bar");
+
+    const slider = wb?.querySelector<HTMLElement>(".track-hit");
+    const before = Number(slider?.getAttribute("aria-valuenow"));
+    slider?.focus();
+    slider?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    await settle(4);
+    ok(Number(document.querySelector(".nested-wb .track-hit")?.getAttribute("aria-valuenow")) === before + 1,
+      "its playhead moves with the arrow keys");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(5);
+    ok(!document.querySelector(".nested-wb"), "Escape leaves the delegated run");
+    ok(!!document.querySelector(".track-hit"), "…and the parent is where it was");
+
+    await a.onDemo();
+    await settle(6);
   }
 
   // ---- comparing two runs -------------------------------------------------

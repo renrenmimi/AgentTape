@@ -117,6 +117,8 @@ type Props = {
   error: string;
   /** Bytes the helper reported, so the offer can say how big it is. */
   offeredBytes: number;
+  /** Open the delegated run and step through it. */
+  onEnter: () => void;
 };
 
 const PAIRED_BY: Record<SubRun["pairedBy"], string> = {
@@ -125,7 +127,7 @@ const PAIRED_BY: Record<SubRun["pairedBy"], string> = {
   manual: "attached by hand",
 };
 
-export default function NestedRun({ delegation, onLoad, loading, error, offeredBytes }: Props) {
+export default function NestedRun({ delegation, onLoad, loading, error, offeredBytes, onEnter }: Props) {
   const run = delegation.run;
 
   if (!run) {
@@ -185,6 +187,13 @@ export default function NestedRun({ delegation, onLoad, loading, error, offeredB
         <dd>{fmtDuration(wall)}</dd>
       </dl>
 
+      <div className="nested-enter">
+        <button type="button" className="btn btn-sm btn-accent" onClick={onEnter}>
+          Step through this run
+        </button>
+        <span className="nested-paired">its own playhead, messages and step detail</span>
+      </div>
+
       <div className="nested-tools">
         {run.tools.slice(0, 10).map((t) => (
           <span className="tool-chip" key={t.name}>
@@ -196,8 +205,9 @@ export default function NestedRun({ delegation, onLoad, loading, error, offeredB
       </div>
 
       <p className="nested-note nested-dim">
-        A nested run shows its shape and its cost. It has no playhead of its own, no messages
-        array and no body text — open the file as a transcript of its own for those.
+        Stepping through a delegated run gives you its timeline, its messages and its bodies. It
+        does not give you the filter, the comparison or the assertions — those belong to the run
+        you opened, and a nested run is something you look into rather than work on.
       </p>
     </div>
   );

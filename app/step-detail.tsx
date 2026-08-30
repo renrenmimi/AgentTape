@@ -40,6 +40,8 @@ type Props = {
   offeredBytes: number;
   /** True when the playhead is on a step the active filter excludes. */
   outOfFilter: boolean;
+  /** Open a loaded delegated run and step through it. */
+  onEnterSubagent?: () => void;
 };
 
 /** Signed, so a context drop across a compaction reads as a drop. */
@@ -143,7 +145,7 @@ function BodyView({ body, title, step }: { body: StepBody | null; title: string;
 
 export default function StepDetail({
   tape, curStep, pairs, onSelectStep, shownIndex,
-  delegation, onLoadSubagent, subLoading, subError, offeredBytes, outOfFilter,
+  delegation, onLoadSubagent, subLoading, subError, offeredBytes, outOfFilter, onEnterSubagent,
 }: Props) {
   const steps = tape.steps;
   const step = steps[curStep];
@@ -291,6 +293,7 @@ export default function StepDetail({
               loading={subLoading}
               error={subError}
               offeredBytes={offeredBytes}
+              onEnter={() => onEnterSubagent?.()}
             />
           )}
 
