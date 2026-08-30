@@ -1346,6 +1346,22 @@ const corpusSrc = existsSync(join(root, "scripts/corpus-notes.mjs"))
 ok(corpusSrc !== "", "the script that produces them is committed, so the figures can be redone");
 ok(!/readFile|createReadStream|readdir|homedir/.test(corpusSrc),
   "…and it opens nothing itself: it reads the statistics index on stdin and no more");
+
+// The write-up of those findings is the same class of artefact and gets the
+// same rule. Prose about how one person works, computed from their own
+// transcripts: the script is committed, the output is not.
+ok(/^docs\/findings\.draft\.md$/m.test(gitignore), "the findings draft is ignored by name");
+const draftSrc = existsSync(join(root, "scripts/findings-draft.mjs"))
+  ? readFileSync(join(root, "scripts/findings-draft.mjs"), "utf8") : "";
+ok(draftSrc !== "", "the script that writes it is committed");
+ok(!/readFile|createReadStream|readdir|homedir/.test(draftSrc),
+  "…and it too opens nothing: the index arrives on stdin");
+ok(/n=40|n=\$\{|one machine, one person/.test(draftSrc),
+  "…and it states the sample size in its own voice rather than in a footnote");
+const strayDrafts = files
+  .map((f) => f.replace(root, ""))
+  .filter((f) => /findings\.draft/.test(f) && f !== "docs/findings.draft.md");
+ok(strayDrafts.length === 0, "…and no copy of it sits outside that path", strayDrafts.join(", "));
 for (const rel of committedTapes) {
   const raw = JSON.parse(readFileSync(join(root, rel), "utf8"));
   if (rel === "public/demo.tape.json") {
