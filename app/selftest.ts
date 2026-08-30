@@ -31,6 +31,8 @@ type Api = {
   setComparing: (b: boolean) => void;
   comparing: boolean;
   setAsserting: (b: boolean) => void;
+  setKeysOpen: (b: boolean) => void;
+  keysOpen: boolean;
   assertions: { pass: boolean; vacuous: boolean; at: number }[];
   rules: unknown[];
   setRules: (r: unknown[]) => void;
@@ -534,6 +536,75 @@ export async function runSelfTest(): Promise<void> {
   }
   const legendGlyphs = document.querySelectorAll(".legend-item svg").length;
   ok(legendGlyphs >= 6, "the legend shows a distinct shape per step kind", `${legendGlyphs} glyphs`);
+
+  // ---- the keys are discoverable and they work ----------------------------
+  {
+    const press = (key: string, opts: KeyboardEventInit = {}) =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts }));
+
+    press("?");
+    await settle(4);
+    ok(!!document.querySelector(".sheet"), "? opens the shortcut sheet");
+    const listed = [...document.querySelectorAll(".sheet-row dd")].map((e) => (e.textContent ?? "").trim());
+    ok(listed.length >= 8, "…and it lists the keys in one place", String(listed.length));
+    const keyText = (document.querySelector(".sheet-list")?.textContent ?? "");
+    for (const k of ["n", "p", "Home", "End", "Esc", "/"]) {
+      ok(keyText.includes(k), `…including ${k}`);
+    }
+    ok(document.querySelector(".sheet")?.getAttribute("role") === "dialog",
+      "the sheet is a dialog");
+    ok(document.activeElement === document.querySelector(".sheet"),
+      "…and focus moves into it");
+
+    // Tab must not walk out the back of a dialog into the workbench behind it.
+    for (let i = 0; i < 8; i++) {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      await settle(1);
+    }
+    ok(document.querySelector(".sheet")?.contains(document.activeElement) === true,
+      "Tab stays inside the dialog rather than escaping behind it");
+
+    press("Escape");
+    await settle(4);
+    ok(!document.querySelector(".sheet"), "Escape closes it");
+
+    // c and a reach the two overlays, and Escape gets back out of each.
+    press("c");
+    await settle(5);
+    ok(!!document.querySelector(".cmp"), "c opens the comparison");
+    ok(document.activeElement === document.querySelector(".cmp"), "…with focus inside it");
+    press("Escape");
+    await settle(5);
+    ok(!document.querySelector(".cmp"), "Escape closes the comparison");
+
+    press("a");
+    await settle(5);
+    ok(!!document.querySelector(".asserts"), "a opens the assertions");
+    press("Escape");
+    await settle(5);
+    ok(!document.querySelector(".asserts"), "Escape closes them");
+
+    // The keys must not fire while typing.
+    const box = document.querySelector<HTMLInputElement>("input.filter-input");
+    box?.focus();
+    box?.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+    await settle(3);
+    ok(!document.querySelector(".cmp"), "the shortcuts do not fire inside a text box");
+    box?.blur();
+    await settle(2);
+
+    // / puts the caret in the search box from anywhere.
+    document.querySelector<HTMLElement>(".track-hit")?.focus();
+    press("/");
+    await settle(3);
+    ok(document.activeElement === box, "/ jumps to the search box");
+    (document.activeElement as HTMLElement)?.blur();
+    await settle(2);
+
+    const keyBtn = [...document.querySelectorAll(".strip-actions button")]
+      .find((b) => /keyboard/i.test(b.getAttribute("aria-label") ?? ""));
+    ok(!!keyBtn, "the sheet is reachable without knowing the key");
+  }
 
   // ---- accessible names and reachability ----------------------------------
   const controls = [...document.querySelectorAll<HTMLElement>(

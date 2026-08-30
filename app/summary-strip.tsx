@@ -23,6 +23,7 @@ type Props = {
   /** How many stated expectations this run holds. */
   assertions: { pass: number; fail: number; vacuous: number };
   onAssert: () => void;
+  onKeys: () => void;
   exporting: boolean;
 };
 
@@ -39,7 +40,8 @@ function Stat({ k, v, sub, risk }: { k: string; v: string; sub?: string; risk?: 
 }
 
 export default function SummaryStrip({
-  tape, summary, delegations, assertions, onExport, onClose, onCompare, onAssert, exporting,
+  tape, summary, delegations, assertions, onExport, onClose, onCompare, onAssert, onKeys,
+  exporting,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
   const s = summary;
@@ -128,6 +130,15 @@ export default function SummaryStrip({
         </button>
         <button type="button" className="btn btn-sm" onClick={onExport} disabled={exporting}>
           {exporting ? "Exporting…" : "Export redacted tape"}
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onKeys}
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts"
+        >
+          <kbd>?</kbd>
         </button>
         <button
           type="button"

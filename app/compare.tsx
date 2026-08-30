@@ -14,6 +14,7 @@ import { buildSpine, compareSpines, realignLine, verdictLine, type Comparison, t
 import { fmtBytes, fmtDuration, fmtInt, fmtTokens, summarise, type Summary } from "@/lib/summary";
 import { isLocal, useHelperSessions, type HelperSession } from "./helper";
 import { ctx2d } from "./canvas";
+import { useDialogFocus } from "./dialog";
 
 const PAD = 8;
 const H = 34;
@@ -173,6 +174,9 @@ export default function Compare({ a, onClose, onLoadB, onLoadBFromHelper, onLoad
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const { sessions, probing, asked, failed, probe } = useHelperSessions();
+  const panel = useRef<HTMLDivElement>(null);
+
+  useDialogFocus(panel);
 
   const run = useCallback(async (load: () => Promise<Tape | null>) => {
     setBusy(true);
@@ -202,7 +206,8 @@ export default function Compare({ a, onClose, onLoadB, onLoadBFromHelper, onLoad
   const markB = cmp?.b ? cmp.b.step : -1;
 
   return (
-    <div className="cmp" role="dialog" aria-modal="true" aria-label="Compare two runs">
+    <div className="cmp" role="dialog" aria-modal="true" aria-label="Compare two runs"
+      tabIndex={-1} ref={panel}>
       <div className="cmp-head">
         <span className="eyebrow">compare</span>
         <span className="cmp-name">A · {a.meta.label || "this run"}</span>
