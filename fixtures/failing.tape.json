@@ -1,0 +1,33 @@
+{
+  "format": "agenttape/1",
+  "redacted": true,
+  "note": "Structure only. Every text body, tool input, tool result, path and URL was replaced by a placeholder that keeps its length; tool_use and message ids were renumbered within this tape. Safe to attach to a bug report.",
+  "label": "redacted session",
+  "session": {"id":"[id 7 chars]","bytes":11033,"lines":23,"badLines":0,"versions":["0.0.0-fixture"]},
+  "fields": {"k":"kind","y":"record type","r":"role","ts":"timestamp (epoch ms)","e":"error","w":"error reason","n":"tool name","u":"tool_use id","m":"message id","d":"model","g":"[input, output, cache_read, cache_create]","x":"context tokens","c":"characters in the body","b":"block index","p":"one-line summary","z":"[pre, post, dropped, trigger] on a compact boundary"},
+  "steps": [
+    {"k":"user","y":"user","r":"user","ts":1783414800000,"c":57,"b":0,"p":"[text 57 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414802000,"n":"Write","u":"t1","m":"m1","d":"claude-fixture-1","g":[40,30,4000,0],"x":4040,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414805000,"u":"t1","x":4040,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414807000,"n":"Bash","u":"t2","m":"m2","d":"claude-fixture-1","g":[40,30,4900,0],"x":4940,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414810000,"u":"t2","x":4940,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414812000,"n":"Bash","u":"t3","m":"m3","d":"claude-fixture-1","g":[40,30,5800,0],"x":5840,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414815000,"u":"t3","x":5840,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414817000,"n":"Bash","u":"t4","m":"m4","d":"claude-fixture-1","g":[40,30,6700,0],"x":6740,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414820000,"u":"t4","x":6740,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414822000,"n":"Bash","u":"t5","m":"m5","d":"claude-fixture-1","g":[40,30,7600,0],"x":7640,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414825000,"u":"t5","x":7640,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414827000,"n":"Bash","u":"t6","m":"m6","d":"claude-fixture-1","g":[40,30,8500,0],"x":8540,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414830000,"u":"t6","x":8540,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414832000,"n":"Bash","u":"t7","m":"m7","d":"claude-fixture-1","g":[40,30,9400,0],"x":9440,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414835000,"u":"t7","x":9440,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414837000,"n":"Bash","u":"t8","m":"m8","d":"claude-fixture-1","g":[40,30,10300,0],"x":10340,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414840000,"u":"t8","x":10340,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414842000,"n":"Read","u":"t9","m":"m9","d":"claude-fixture-1","g":[40,30,460000,0],"x":460040,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783414845000,"u":"t9","x":460040,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783414847000,"n":"Bash","u":"t10","m":"m10","d":"claude-fixture-1","g":[40,30,12100,0],"x":12140,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783415187000,"u":"t10","x":12140,"c":300,"b":0,"p":"[result 300 chars]"},
+    {"k":"tool-call","y":"assistant","r":"assistant","ts":1783415189000,"n":"Grep","u":"t11","m":"m11","d":"claude-fixture-1","g":[40,30,13000,0],"x":13040,"c":61,"b":0,"p":"[input 61 chars]"},
+    {"k":"tool-result","y":"user","r":"user","ts":1783415192000,"e":1,"w":"tool reported an error","u":"t11","x":13040,"c":300,"b":0,"p":"[result 300 chars]"}
+  ]
+}

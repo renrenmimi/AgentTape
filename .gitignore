@@ -12,3 +12,6 @@ out/
 fixtures/real/
 *.tape.json
 !public/demo.tape.json
+# Committed on purpose: invented runs, scrubbed to structure, so CI can
+# demonstrate the checker's exit code instead of the README claiming it.
+!fixtures/*.tape.json

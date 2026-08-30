@@ -6,6 +6,10 @@
 //   node bin/agenttape.mjs --all      do not stop at the twenty most recent
 //   node bin/agenttape.mjs --port N   default 4319
 //
+//   node bin/agenttape.mjs check <rules.json> <tape.jsonl|tape.tape.json>
+//                                     check a run against stated expectations
+//                                     and exit non-zero if any of them failed
+//
 // It runs alongside `npm run dev` and answers two questions for the page:
 // which sessions exist, and give me that one. It does not serve the app —
 // Next.js already does that, and a second way to serve it would be a second
@@ -25,10 +29,13 @@
 //     that field
 //   * write anything, anywhere
 //
-// No dependencies. Node 18 or newer.
+// No dependencies. Node 22.18 or newer, because `check` imports the parser and
+// the rule checker as TypeScript modules and relies on the type stripping that
+// became unflagged there.
 
 import { createReadStream } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
@@ -375,7 +382,84 @@ function serve(initial) {
   });
 }
 
+// ---------------------------------------------------------------- checking
+
+/**
+ * Index a tape the same way the browser does — one line at a time, holding the
+ * index and not the file. A .tape.json goes through the same reader the page
+ * uses, so a scrubbed tape checks exactly as a transcript does.
+ */
+async function readTape(path) {
+  const { createIndexer, pushLine, finishIndex, pairTools } = await import("../lib/parser.ts");
+  if (path.endsWith(".tape.json") || path.endsWith(".json")) {
+    const { tapeFromFile } = await import("../lib/tape.ts");
+    const tape = tapeFromFile(JSON.parse(await readFile(path, "utf8")));
+    return { steps: tape.steps, pairs: pairTools(tape.steps), meta: tape.meta };
+  }
+  const ix = createIndexer(path.split("/").pop() ?? "tape");
+  let off = 0;
+  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of rl) {
+    const len = Buffer.byteLength(line);
+    pushLine(ix, line, off, len);
+    off += len + 1;
+  }
+  const { meta, steps } = finishIndex(ix);
+  return { steps, pairs: pairTools(steps), meta };
+}
+
+async function check(rulesPath, tapePath) {
+  const { parseRuleSet, checkAll, tally } = await import("../lib/assert.ts");
+
+  let text;
+  try {
+    text = await readFile(rulesPath, "utf8");
+  } catch (e) {
+    console.error(`cannot read the rule set: ${e.message}`);
+    return 2;
+  }
+  const { set, problems } = parseRuleSet(text);
+  for (const p of problems) console.error("  rule set: " + p);
+  if (!set.rules.length) {
+    console.error("no usable rules — nothing to check");
+    return 2;
+  }
+
+  let tape;
+  try {
+    tape = await readTape(tapePath);
+  } catch (e) {
+    console.error(`cannot read the tape: ${e.message}`);
+    return 2;
+  }
+
+  const results = checkAll(tape.steps, set.rules, tape.pairs);
+  const t = tally(results);
+  const name = set.name ? ` · ${set.name}` : "";
+
+  console.log(`\n  ${tapePath.split("/").pop()} — ${tape.steps.length.toLocaleString("en-US")} steps${name}\n`);
+  for (const r of results) {
+    const mark = r.pass ? (r.vacuous ? "    " : "ok  ") : "FAIL";
+    const at = r.at >= 0 ? `  (step ${(r.at + 1).toLocaleString("en-US")})` : "";
+    console.log(`  ${mark}  ${r.label}`);
+    console.log(`        ${r.detail}${at}`);
+  }
+  const vac = t.vacuous ? `, ${t.vacuous} with nothing to check` : "";
+  console.log(`\n  ${t.pass - t.vacuous} held, ${t.fail} failed${vac}\n`);
+
+  // The exit code is the point: it is what lets this sit in somebody's CI.
+  return t.fail ? 1 : 0;
+}
+
 // ---------------------------------------------------------------- main
+
+if (argv[0] === "check") {
+  if (argv.length < 3) {
+    console.error("usage: agenttape check <rules.json> <tape.jsonl|tape.tape.json>");
+    process.exit(2);
+  }
+  process.exit(await check(argv[1], argv[2]));
+}
 
 const listing = await listSessions({ deep: LIMIT });
 printList(listing);

@@ -288,6 +288,40 @@ export async function runSelfTest(): Promise<void> {
     ok(/nothing to check/.test(document.querySelector(".rule-detail")?.textContent ?? ""),
       "…in words");
 
+    // A rule set is a file: it can be written out and read back in.
+    const save = [...document.querySelectorAll(".asserts .cmp-head button")]
+      .find((b) => /save rule set/i.test(b.textContent ?? ""));
+    ok(!!save, "the panel can save the current rules as a file");
+    const load = document.querySelector<HTMLInputElement>('.asserts input[type="file"]');
+    ok(!!load && !!load.getAttribute("aria-label"), "…and load one back, with a named control");
+
+    const drop = (text: string) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([text], "x.rules.json", { type: "application/json" }));
+      if (!load) return;
+      load.files = dt.files;
+      load.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    drop(JSON.stringify({
+      format: "agenttape-rules/1",
+      rules: [{ kind: "max-repeats", n: 3 }, { kind: "ends-clean" }],
+    }));
+    await settle(6);
+    ok(api().rules.length === 2, "a loaded set replaces the rules", String(api().rules.length));
+    ok(document.querySelectorAll(".rule").length === 2, "…and the panel redraws for it");
+    ok(!document.querySelector(".rule-problems"), "…with nothing to complain about");
+
+    drop(JSON.stringify({ format: "wrong", rules: [{ kind: "nonsense" }] }));
+    await settle(6);
+    const said = [...document.querySelectorAll(".rule-problems li")].map((e) => (e.textContent ?? "").trim());
+    ok(said.length >= 2, "a broken set is reported rather than silently ignored", said.join(" | "));
+    ok(said.some((x) => /unknown rule kind/.test(x)), "…naming the rule that was wrong");
+    ok(api().rules.length === 2, "…and the rules that were working are left alone");
+
+    ok(/exits non-zero/.test(document.querySelector(".cmp-rule")?.textContent ?? ""),
+      "the panel says the same rules run outside the browser");
+
     document.querySelector<HTMLElement>(".asserts .cmp-head .btn:last-of-type")?.click();
     await settle(4);
     ok(!document.querySelector(".asserts"), "the panel closes");

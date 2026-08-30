@@ -1,0 +1,12 @@
+{
+  "format": "agenttape-rules/1",
+  "name": "AgentTape's own expectations",
+  "note": "What a run of this kind is supposed to look like. Checked in CI against two invented tapes, one that holds these and one that does not.",
+  "rules": [
+    {"kind":"ends-clean"},
+    {"kind":"max-repeats","n":5},
+    {"kind":"max-context","n":200000},
+    {"kind":"max-tool-seconds","n":120},
+    {"kind":"before","first":"Grep","then":"Write"}
+  ]
+}
