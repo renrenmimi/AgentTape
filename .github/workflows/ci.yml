@@ -29,3 +29,16 @@ jobs:
       - run: npm ci
       - run: node verify.mjs
       - run: npx next build
+
+      # Dogfooding. The exit code of `agenttape check` is the whole feature —
+      # it is what lets somebody put this in their own CI — so it is exercised
+      # here in both directions rather than described in a README.
+      - name: a run that meets its expectations exits 0
+        run: node bin/agenttape.mjs check fixtures/expectations.rules.json fixtures/passing.tape.json
+      - name: a run that does not exits non-zero
+        run: |
+          if node bin/agenttape.mjs check fixtures/expectations.rules.json fixtures/failing.tape.json; then
+            echo "::error::the checker passed a tape that breaks every rule"
+            exit 1
+          fi
+          echo "the checker failed it, as it should have"

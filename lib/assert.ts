@@ -209,6 +209,117 @@ export function checkAll(steps: Step[], rules: Rule[], pairs: Map<number, number
   return rules.map((r) => checkRule(steps, r, pairs));
 }
 
+// ---------------------------------------------------------------- rule sets
+
+/**
+ * The on-disk shape. Versioned, because the vocabulary will grow and a file
+ * written today should still say what it meant a year from now.
+ *
+ * It carries no run and no transcript — only expectations — so a rule set is
+ * safe to commit, safe to share, and safe to point at somebody else's tape.
+ */
+export const RULES_FORMAT = "agenttape-rules/1";
+
+export type RuleSet = {
+  format: string;
+  /** What this set is for, written by whoever wrote it. */
+  name?: string;
+  note?: string;
+  rules: Rule[];
+};
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const num = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * Read one rule, or say why not.
+ *
+ * Deliberately strict about kinds and numbers and deliberately quiet about
+ * everything else: a rule set written by hand should fail with a sentence
+ * naming the rule, not with a stack trace.
+ */
+export function parseRule(v: unknown, where: string): { rule?: Rule; problem?: string } {
+  if (!isObj(v)) return { problem: `${where}: not an object` };
+  const kind = str(v.kind);
+  switch (kind) {
+    case "ends-clean":
+      return { rule: { kind } };
+    case "max-context":
+    case "max-tool-seconds": {
+      const n = num(v.n);
+      if (n === null) return { problem: `${where}: ${kind} needs a positive number in "n"` };
+      return { rule: { kind, n } };
+    }
+    case "max-repeats": {
+      const n = num(v.n);
+      if (n === null) return { problem: `${where}: max-repeats needs a positive number in "n"` };
+      const tool = str(v.tool);
+      return { rule: tool ? { kind, n, tool } : { kind, n } };
+    }
+    case "before": {
+      const first = str(v.first);
+      const then = str(v.then);
+      if (!first || !then) return { problem: `${where}: before needs "first" and "then" tool names` };
+      return { rule: { kind, first, then } };
+    }
+    case "":
+      return { problem: `${where}: no "kind"` };
+    default:
+      return { problem: `${where}: unknown rule kind "${kind}"` };
+  }
+}
+
+/**
+ * Read a whole set. Returns whatever parsed plus every problem found, rather
+ * than the first one — somebody fixing a hand-written file wants the list.
+ */
+export function parseRuleSet(input: unknown): { set: RuleSet; problems: string[] } {
+  const problems: string[] = [];
+  const raw = typeof input === "string" ? safeJson(input, problems) : input;
+  if (!isObj(raw)) {
+    return { set: { format: RULES_FORMAT, rules: [] }, problems: [...problems, "not a JSON object"] };
+  }
+  if (str(raw.format) !== RULES_FORMAT) {
+    problems.push(`format is "${str(raw.format) || "missing"}", expected "${RULES_FORMAT}"`);
+  }
+  const rules: Rule[] = [];
+  const list = Array.isArray(raw.rules) ? raw.rules : [];
+  if (!Array.isArray(raw.rules)) problems.push('"rules" is missing or not a list');
+  list.forEach((r, i) => {
+    const { rule, problem } = parseRule(r, `rules[${i}]`);
+    if (rule) rules.push(rule);
+    if (problem) problems.push(problem);
+  });
+  return {
+    set: { format: RULES_FORMAT, name: str(raw.name) || undefined, note: str(raw.note) || undefined, rules },
+    problems,
+  };
+}
+
+function safeJson(text: string, problems: string[]): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    problems.push("not valid JSON: " + (e instanceof Error ? e.message : String(e)));
+    return null;
+  }
+}
+
+/** One rule per line, so a diff on a rule set reads as a diff on expectations. */
+export function serializeRuleSet(set: RuleSet): string {
+  const head: string[] = [`  "format": ${JSON.stringify(RULES_FORMAT)},`];
+  if (set.name) head.push(`  "name": ${JSON.stringify(set.name)},`);
+  if (set.note) head.push(`  "note": ${JSON.stringify(set.note)},`);
+  const lines = set.rules.map((r, i) =>
+    "    " + JSON.stringify(r) + (i === set.rules.length - 1 ? "" : ","));
+  return "{\n" + head.join("\n") + "\n  \"rules\": [\n" + lines.join("\n") + "\n  ]\n}\n";
+}
+
 export const tally = (rs: RuleResult[]): { pass: number; fail: number; vacuous: number } => ({
   pass: rs.filter((r) => r.pass).length,
   fail: rs.filter((r) => !r.pass).length,

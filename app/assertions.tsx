@@ -7,9 +7,12 @@
 // the tape actually contains. The moment this needs a parser, the thing under
 // test has stopped being the run.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Step } from "@/lib/format";
-import { DEFAULT_RULES, checkAll, type Rule, type RuleResult } from "@/lib/assert";
+import {
+  DEFAULT_RULES, RULES_FORMAT, checkAll, parseRuleSet, serializeRuleSet,
+  type Rule, type RuleResult,
+} from "@/lib/assert";
 import { fmtInt } from "@/lib/summary";
 import { useDialogFocus } from "./dialog";
 
@@ -149,6 +152,29 @@ export default function Assertions({
 }: Props) {
   const results = useMemo(() => checkAll(steps, rules, pairs), [steps, rules, pairs]);
   const panel = useRef<HTMLDivElement>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const [problems, setProblems] = useState<string[]>([]);
+
+  const save = () => {
+    const text = serializeRuleSet({
+      format: RULES_FORMAT,
+      name: "expectations",
+      note: "Written in AgentTape. Run with: agenttape check <this file> <a tape>",
+      rules,
+    });
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "expectations.rules.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const open = async (f: File) => {
+    const { set, problems: found } = parseRuleSet(await f.text());
+    setProblems(found);
+    if (set.rules.length) onRules(set.rules);
+  };
 
   useDialogFocus(panel);
 
@@ -161,13 +187,40 @@ export default function Assertions({
           {results.filter((r) => r.pass).length} of {results.length} hold
         </span>
         <span className="spacer" />
-        <button type="button" className="btn btn-sm" onClick={() => onRules(DEFAULT_RULES)}>
+        <button type="button" className="btn btn-sm" onClick={save} disabled={rules.length === 0}>
+          Save rule set
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => file.current?.click()}>
+          Load rule set
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept=".json"
+          className="sr-only"
+          aria-label="Load a rule set"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void open(f);
+            e.target.value = "";
+          }}
+        />
+        <button type="button" className="btn btn-sm" onClick={() => { setProblems([]); onRules(DEFAULT_RULES); }}>
           Reset to defaults
         </button>
         <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
       </div>
 
       <div className="cmp-body">
+        {problems.length > 0 && (
+          <div className="err-box" role="status">
+            <b>That rule set had problems:</b>
+            <ul className="rule-problems">
+              {problems.map((p) => <li key={p}>{p}</li>)}
+            </ul>
+          </div>
+        )}
+
         <div className="cmp-rule">
           <span className="cmp-rule-tag">what this is for</span>
           <p>
@@ -177,6 +230,12 @@ export default function Assertions({
             <b> Every rule is checked against the index</b> — tool names, timings, token counts,
             error flags — so a redacted tape can be asserted against exactly as well as the
             transcript it came from.
+          </p>
+          <p>
+            Save the set and the same expectations run outside this page:
+            {" "}<code>agenttape check expectations.rules.json a-tape.jsonl</code> prints a line per
+            rule and <b>exits non-zero when one fails</b>, which is what puts it in a CI job.
+            The format is documented in <code>docs/rules.md</code>.
           </p>
         </div>
 

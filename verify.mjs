@@ -26,7 +26,10 @@ import {
   isDelegation, pairBySidecar, pairByTime, summariseRun,
 } from "./lib/subagents.ts";
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
-import { DEFAULT_RULES, checkAll, checkRule, ruleLabel, tally } from "./lib/assert.ts";
+import {
+  DEFAULT_RULES, RULES_FORMAT, checkAll, checkRule, parseRule, parseRuleSet,
+  ruleLabel, serializeRuleSet, tally,
+} from "./lib/assert.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -664,6 +667,86 @@ section("assertions");
   ok(!/\bbody\b|\.preview\b/.test(assertSrc), "no rule reaches for a body or a preview");
 }
 
+// ---------------------------------------------------------------- rule sets
+
+section("rule sets");
+{
+  const full = {
+    format: RULES_FORMAT,
+    name: "a set",
+    note: "written by a person",
+    rules: [...DEFAULT_RULES, { kind: "before", first: "Grep", then: "Write" },
+      { kind: "max-repeats", n: 2, tool: "Bash" }],
+  };
+  const text = serializeRuleSet(full);
+  const back = parseRuleSet(text);
+  ok(back.problems.length === 0, "a set this codebase wrote parses with no complaints",
+    back.problems.join("; "));
+  ok(JSON.stringify(back.set.rules) === JSON.stringify(full.rules), "…and round trips exactly");
+  ok(back.set.name === "a set" && back.set.note === "written by a person",
+    "…keeping the prose a person wrote");
+  ok(text.split("\n").filter((l) => l.startsWith("    {")).length === full.rules.length,
+    "one rule per line, so a diff on a set reads as a diff on expectations",
+    String(text.split("\n").filter((l) => l.startsWith("    {")).length));
+
+  // Every rejection names the rule rather than throwing.
+  const bad = parseRuleSet(JSON.stringify({
+    format: "something-else",
+    rules: [{ kind: "max-context" }, { kind: "invented" }, {}, "not an object",
+      { kind: "before", first: "A" }, { kind: "max-repeats", n: -3 }],
+  }));
+  ok(bad.set.rules.length === 0, "nothing unusable is kept");
+  ok(bad.problems.length === 7, "every problem is reported, not just the first",
+    String(bad.problems.length));
+  ok(bad.problems.some((p) => /format is "something-else"/.test(p)), "…including a wrong format");
+  ok(bad.problems.some((p) => /rules\[1\]: unknown rule kind "invented"/.test(p)),
+    "…naming the index and the kind");
+  ok(bad.problems.some((p) => /rules\[5\]/.test(p)), "…and rejecting a negative number");
+  ok(parseRuleSet("{not json").problems.some((p) => /not valid JSON/.test(p)),
+    "garbage is reported as garbage");
+  ok(parseRuleSet(null).problems.includes("not a JSON object"), "so is nothing at all");
+  ok(parseRule({ kind: "ends-clean" }, "x").rule.kind === "ends-clean",
+    "a rule with no parameters needs none");
+
+  // The committed fixtures, and the CI that uses them.
+  const rulesPath = join(root, "fixtures/expectations.rules.json");
+  ok(existsSync(rulesPath), "the fixture rule set is committed");
+  const fixSet = parseRuleSet(readFileSync(rulesPath, "utf8"));
+  ok(fixSet.problems.length === 0, "…and parses clean", fixSet.problems.join("; "));
+  ok(fixSet.set.rules.length >= 5, "…with a rule of every kind in it",
+    String(fixSet.set.rules.length));
+  ok(new Set(fixSet.set.rules.map((r) => r.kind)).size === 5,
+    "…covering all five kinds", [...new Set(fixSet.set.rules.map((r) => r.kind))].join(","));
+
+  for (const [name, wantFail] of [["passing", false], ["failing", true]]) {
+    const f = join(root, `fixtures/${name}.tape.json`);
+    ok(existsSync(f), `the ${name} fixture tape is committed`);
+    const raw = JSON.parse(readFileSync(f, "utf8"));
+    const tape = tapeFromFile(raw);
+    const res = checkAll(tape.steps, fixSet.set.rules, pairTools(tape.steps));
+    const t = tally(res);
+    if (wantFail) {
+      ok(t.fail === fixSet.set.rules.length,
+        "the failing fixture breaks every rule, so CI proves the non-zero exit",
+        `${t.fail} of ${res.length}`);
+    } else {
+      ok(t.fail === 0, "the passing fixture holds every rule", `${t.fail} failed`);
+      ok(t.vacuous === 0, "…and none of them was vacuous", `${t.vacuous} vacuous`);
+    }
+  }
+
+  const ci = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
+  ok(/agenttape\.mjs check .*passing\.tape\.json/.test(ci),
+    "CI checks the passing fixture");
+  ok(/agenttape\.mjs check .*failing\.tape\.json/.test(ci) && /exit 1/.test(ci),
+    "…and fails the build if the failing one is not rejected");
+
+  const cli = readFileSync(join(root, "bin/agenttape.mjs"), "utf8");
+  ok(/argv\[0\] === "check"/.test(cli), "the checker is a subcommand of the one binary");
+  ok(/t\.fail \? 1 : 0/.test(cli), "…and its exit code is the count of failures");
+  ok(!existsSync(join(root, "bin/agenttape-check.mjs")), "there is no second binary");
+}
+
 // ---------------------------------------------------------------- comparison
 
 section("comparing two runs");
@@ -984,6 +1067,26 @@ for (const f of sources) {
 ok(hexLeaks.length === 0,
   "no file contains a bare run of hex that could be a session or agent id",
   hexLeaks.slice(0, 4).join(", "));
+
+// Committed tapes are a new class of artefact this round. Exactly one of them
+// is allowed to carry readable text — the demo, which is fiction written by
+// hand. Every other committed tape must be scrubbed to structure, so that
+// adding one cannot leak by accident.
+const committedTapes = files
+  .filter((f) => f.endsWith(".tape.json"))
+  .map((f) => f.replace(root, ""));
+ok(committedTapes.length > 0, "there are committed tapes to check", committedTapes.join(", "));
+for (const rel of committedTapes) {
+  const raw = JSON.parse(readFileSync(join(root, rel), "utf8"));
+  if (rel === "public/demo.tape.json") {
+    ok(raw.redacted === false, "the demo tape is the one that carries text, and admits it");
+    continue;
+  }
+  ok(raw.redacted === true, `${rel} is scrubbed to structure`);
+  ok(raw.bodies === undefined, `${rel} carries no bodies`);
+  const bad = auditRedacted(raw);
+  ok(bad.length === 0, `${rel} passes the slot-by-slot audit`, bad.slice(0, 3).join(", "));
+}
 ok(remoteUrls.length === 0, "no shipped file names a host other than 127.0.0.1",
   remoteUrls.join(", "));
 
