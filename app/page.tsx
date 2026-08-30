@@ -35,6 +35,7 @@ import Compare from "./compare";
 import Assertions from "./assertions";
 import Shortcuts from "./shortcuts";
 import Overview from "./overview";
+import NestedWorkbench from "./nested-workbench";
 import FilterBar from "./filter-bar";
 import { runSelfTest } from "./selftest";
 
@@ -57,6 +58,11 @@ export default function Page() {
   const [rules, setRules] = useState<Rule[]>(DEFAULT_RULES);
   const [keysOpen, setKeysOpen] = useState(false);
   const [overview, setOverview] = useState(false);
+  /** The delegated run being stepped through, by the parent step it came from. */
+  const [inside, setInside] = useState(-1);
+  /** A dropped transcript waiting for the user to say what to do with it. */
+  const [offer, setOffer] = useState<{ file: File; attached: number } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; lines: number; label: string } | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -216,6 +222,7 @@ export default function Page() {
     setOrigin(null);
     setSubError("");
     setSubLoading(-1);
+    setInside(-1);
   }, []);
 
   const adopt = useCallback((t: Tape) => {
@@ -458,6 +465,41 @@ export default function Page() {
     }
   }, [tape]);
 
+  /**
+   * Files dropped while a tape is already open.
+   *
+   * Until now the only drop target was the empty state, so dropping a subagent
+   * file onto a loaded session did nothing and said nothing — the worst of the
+   * three possible behaviours. Subagent files pair straight into the run on
+   * screen; a transcript is ambiguous, so it asks rather than guessing.
+   */
+  const onDropWhileLoaded = useCallback(
+    async (files: File[]) => {
+      if (!tape) return;
+      setSubError("");
+      const subs = files.filter((f) => agentIdFromName(f.name) !== "");
+      const main = files.find(
+        (f) => agentIdFromName(f.name) === "" && !/\.meta\.json$/.test(f.name),
+      );
+
+      let attached = 0;
+      if (subs.length) {
+        const dels = findDelegations(tape.steps, pairs);
+        for (const f of subs) {
+          if (await attachSubagent(f, agentIdFromName(f.name), "", dels)) attached++;
+        }
+        if (attached < subs.length) {
+          setSubError(
+            `${subs.length - attached} of ${subs.length} subagent files did not match a call in this run.`,
+          );
+        }
+      }
+      if (main) setOffer({ file: main, attached });
+      else if (!subs.length) setSubError("Nothing in that drop looked like a transcript.");
+    },
+    [tape, pairs, attachSubagent],
+  );
+
   // ---- keyboard -----------------------------------------------------------
 
   useEffect(() => {
@@ -471,6 +513,7 @@ export default function Page() {
       // Escape closes whatever is open, from anywhere including a text box.
       if (e.key === "Escape") {
         if (keysOpen) { setKeysOpen(false); e.preventDefault(); }
+        else if (inside >= 0) { setInside(-1); e.preventDefault(); }
         else if (asserting) { setAsserting(false); e.preventDefault(); }
         else if (comparing) { setComparing(false); e.preventDefault(); }
         else if (typing) (t as HTMLInputElement).blur();
@@ -478,7 +521,7 @@ export default function Page() {
       }
       if (typing) return;
       // While an overlay is up it owns the keyboard; only Escape gets through.
-      if (keysOpen || asserting || comparing) {
+      if (keysOpen || asserting || comparing || inside >= 0) {
         if (e.key === "?") { setKeysOpen((v) => !v); e.preventDefault(); }
         return;
       }
@@ -508,7 +551,7 @@ export default function Page() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, pos, setPos, seekNext, keysOpen, asserting, comparing]);
+  }, [view, pos, setPos, seekNext, keysOpen, asserting, comparing, inside]);
 
   // Focus the playhead once a tape is open so the keys work without a click.
   useEffect(() => {
@@ -545,6 +588,26 @@ export default function Page() {
       setAsserting,
       setKeysOpen,
       get keysOpen() { return keysOpen; },
+      setInside,
+      // The self-test has no subagent file on disk, so it needs a way to hang a
+      // run on a delegation. Behind the flag, like everything else here.
+      attachSyntheticRun: () => {
+        const d = delegations[0];
+        if (!d) return;
+        const sub = tapeFromFile({
+          format: "agenttape/1", redacted: false, label: "synthetic subagent",
+          session: { id: "", bytes: 0, lines: 6, badLines: 0, versions: [] }, fields: {},
+          steps: Array.from({ length: 6 }, (_, i) => ({
+            k: i % 2 === 0 ? "tool-call" : "tool-result",
+            y: i % 2 === 0 ? "assistant" : "user",
+            r: i % 2 === 0 ? "assistant" : "user",
+            ts: d.from + i * 1000, c: 40 + i, b: 0, p: "synthetic subagent step " + i,
+            x: 1000 + i * 100,
+            ...(i % 2 === 0 ? { n: "Bash", u: "st" + i, m: "sm" + i } : { u: "st" + (i - 1) }),
+          })),
+        });
+        setSubRuns((prev) => new Map(prev).set(d.step, summariseRun(sub, "synthetic", "manual")));
+      },
       get assertions() { return assertions; },
       get rules() { return rules; },
       setRules,
@@ -589,9 +652,77 @@ export default function Page() {
   }
 
   const cur = view.steps[Math.min(pos, view.steps.length - 1)];
+  const insideRun = inside >= 0 ? subRuns.get(inside) ?? null : null;
 
   return (
-    <main className="tape">
+    <main
+      className={"tape" + (dragOver ? " tape-drop" : "")}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setDragOver(false);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragOver(false);
+        void onDropWhileLoaded([...e.dataTransfer.files]);
+      }}
+    >
+      {dragOver && (
+        <div className="drop-hint" aria-hidden>
+          <b>Drop to add</b>
+          <span>
+            <code>agent-*.jsonl</code> pairs into this run · a transcript asks whether to open
+            or compare
+          </span>
+        </div>
+      )}
+
+      {offer && (
+        <div className="sheet-scrim" onClick={() => setOffer(null)}>
+          <div className="sheet" role="dialog" aria-modal="true" aria-label="What to do with the dropped transcript"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-head">
+              <span className="eyebrow">dropped a transcript</span>
+              <span className="spacer" />
+              <button type="button" className="btn btn-sm" onClick={() => setOffer(null)}>Cancel</button>
+            </div>
+            <p className="nested-note">
+              {offer.attached > 0 && (
+                <><b>{fmtInt(offer.attached)}</b> subagent {offer.attached === 1 ? "run" : "runs"} paired
+                into this session. </>
+              )}
+              And a transcript came with it. Open it in place of this one, or compare the two?
+            </p>
+            <div className="drop-actions">
+              <button type="button" className="btn btn-accent"
+                onClick={() => { const f = offer.file; setOffer(null); void onFiles([f]); }}>
+                Open it
+              </button>
+              <button type="button" className="btn"
+                onClick={() => { setOffer(null); setComparing(true); }}>
+                Compare with it
+              </button>
+            </div>
+            <p className="sheet-note">
+              Comparing opens the panel; drop the same file there to load it as the second run.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {insideRun && (
+        <NestedWorkbench
+          run={insideRun}
+          parentStep={shownIndex(inside) || inside + 1}
+          onClose={() => setInside(-1)}
+        />
+      )}
       {keysOpen && <Shortcuts onClose={() => setKeysOpen(false)} />}
       {asserting && (
         <Assertions
@@ -730,6 +861,7 @@ export default function Page() {
             origin?.agents.find((a) => a.toolUseId === curDelegation?.toolUseId)?.bytes ?? 0
           }
           outOfFilter={filtering && mask[pos] === 0}
+          onEnterSubagent={curDelegation?.run ? () => setInside(curDelegation.step) : undefined}
         />
       </div>
     </main>
