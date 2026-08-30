@@ -20,6 +20,16 @@ import { summarise } from "./summary.ts";
  *  cliff, small enough that four hundred of them are still a small file. */
 export const PROFILE_BUCKETS = 24;
 
+/** A subagent transcript sitting beside a session. Ids and sizes only — the
+ *  sidecar's `description` is written from a prompt and is never read. */
+export type SubagentRef = {
+  id: string;
+  bytes: number;
+  /** The parent tool_use id, from the sidecar. Empty when there is none. */
+  toolUseId: string;
+  agentType: string;
+};
+
 export type SessionStats = {
   project: string;
   session: string;
@@ -52,6 +62,11 @@ export type SessionStats = {
   models: string[];
   versions: string[];
   ctxProfile: number[];
+  /**
+   * Attached after the index is built and deliberately never cached: these
+   * files appear and change without the session's own size or mtime moving.
+   */
+  agents?: SubagentRef[];
 };
 
 /** Peak context per bucket, carried forward so a bucket with no assistant turn

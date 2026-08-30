@@ -1396,8 +1396,36 @@ ok(!/CACHE_DIR[^\n]*PROJECTS|join\(PROJECTS[^)]*cache/i.test(helperCode),
 const writes = [...helperCode.matchAll(/writeFile\(([^,]+),/g)].map((m) => m[1].trim());
 ok(writes.length === 1 && writes[0] === "CACHE_FILE",
   "the helper writes exactly one file, and it is the cache", writes.join(", "));
-ok(/hit\.bytes === f\.st\.size && hit\.mtime === f\.st\.mtimeMs/.test(helperCode),
+// One index builder, two callers. The helper streams files off disk and the
+// browser walks a granted directory; if either grew its own copy of the
+// freshness rule or the record shape, one of them would drift into showing
+// something it should not.
+const indexSrc = read("lib/session-index.ts");
+ok(/hit\.bytes === s\.bytes && hit\.mtime === s\.mtime/.test(indexSrc),
   "the cache is keyed by the file's size and mtime together");
+ok(/buildSessionIndex/.test(helperCode), "the helper builds its index through the shared module");
+const localSrc = read("app/local-index.ts");
+ok(/buildSessionIndex/.test(localSrc), "…and so does the browser");
+for (const [who, src] of [["the helper", helperCode], ["the browser", localSrc]]) {
+  ok(!/sessionStats\s*\(/.test(src.replace(/import[^;]+;/g, "")),
+    `${who} does not build a session record itself`);
+}
+ok(/isFresh/.test(indexSrc), "the freshness rule has one name and one home");
+
+// The browser cache is a new place data lands this round. What goes into it is
+// whatever buildSessionIndex produced and nothing else, and there is a way to
+// get rid of it, because the UI promises one.
+ok(/localStorage\.setItem\(CACHE_KEY/.test(localSrc), "the browser cache has one write site");
+ok(/JSON\.stringify\(\{ format: CACHE_FORMAT, entries \}\)/.test(localSrc),
+  "…and it stores the index builder's output rather than anything assembled here");
+ok(/export function clearLocalCache/.test(localSrc), "…and it can be cleared");
+ok(/CACHE_KEY = "agenttape-/.test(localSrc), "…under a namespaced key");
+// Feature detection, not user-agent sniffing.
+ok(/typeof \(window as \{ showDirectoryPicker\?: unknown \}\)\.showDirectoryPicker === "function"/.test(localSrc),
+  "the folder picker is feature-detected");
+ok(!/userAgent|navigator\.vendor|isSafari|isChrome/i.test(localSrc),
+  "…and no browser is identified by name");
+ok(/webkitdirectory/.test(localSrc), "there is a fallback for browsers without it");
 
 
 // A subagent sidecar carries a `description` written from the prompt that

@@ -12,6 +12,7 @@ import { isLocal, useHelperSessions, type HelperSession } from "./helper";
 
 type Props = {
   onOverview: () => void;
+  onHelperSeen: (seen: boolean) => void;
   /** Several at once: a transcript plus the agent-*.jsonl files beside it. */
   onFiles: (files: File[]) => void;
   onHelperPick: (session: HelperSession) => void;
@@ -20,7 +21,9 @@ type Props = {
   error: string;
 };
 
-export default function EmptyState({ onFiles, onHelperPick, onDemo, onOverview, progress, error }: Props) {
+export default function EmptyState({
+  onFiles, onHelperPick, onDemo, onOverview, onHelperSeen, progress, error,
+}: Props) {
   const [over, setOver] = useState(false);
   const { sessions, probing, asked, failed, probe } = useHelperSessions();
   // Whether the helper block belongs on the page depends on `location`, which
@@ -30,6 +33,7 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, onOverview, 
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setMounted(true); }, []);
+  useEffect(() => { onHelperSeen(!!sessions && sessions.length > 0); }, [sessions, onHelperSeen]);
 
   const take = useCallback(
     (files: FileList | null) => {
@@ -99,6 +103,9 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, onOverview, 
           <button type="button" className="btn" onClick={() => input.current?.click()}>
             Choose a file
           </button>
+          <button type="button" className="btn" onClick={onOverview}>
+            All sessions, by the numbers
+          </button>
           <input
             ref={input}
             type="file"
@@ -129,11 +136,7 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, onOverview, 
                   {asked ? "Look again" : "Look for it"}
                 </button>
               )}
-              {!probing && sessions && sessions.length > 0 && (
-                <button type="button" className="btn btn-sm" onClick={onOverview}>
-                  All sessions, by the numbers
-                </button>
-              )}
+
             </div>
             {sessions?.map((s) => (
               <button

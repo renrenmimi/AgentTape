@@ -35,6 +35,8 @@ type Api = {
   keysOpen: boolean;
   setInside: (n: number) => void;
   reportText: () => string;
+  indexFiles: (files: File[]) => Promise<{ sessions: unknown[]; indexed: number; cached: number }>;
+  pickerSupport: () => Promise<string>;
   attachSyntheticRun?: () => void;
   assertions: { pass: boolean; vacuous: boolean; at: number }[];
   rules: unknown[];
@@ -763,6 +765,86 @@ export async function runSelfTest(): Promise<void> {
     "only the flagged globals are exposed",
     globals.join(", "),
   );
+
+  // ---- the browser can build the index itself -----------------------------
+  {
+    const support = await api().pickerSupport();
+    ok(["directory-picker", "webkitdirectory", "none"].includes(support),
+      "the folder picker is feature-detected, not assumed", support);
+
+    // Two invented transcripts as Files, with the relative paths a folder pick
+    // would give them, so the project/session split is exercised too.
+    const at = (n: number) => new Date(Date.parse("2026-10-10T09:00:00Z") + n * 1000).toISOString();
+    const MARK = "WWLEAKWW";
+    const make = (session: string, project: string, tools: string[]) => {
+      const lines = [
+        JSON.stringify({ type: "custom-title", sessionId: session, customTitle: MARK + "-title" }),
+        JSON.stringify({ type: "user", sessionId: session, uuid: "u0", timestamp: at(0),
+          cwd: "/Users/" + MARK, gitBranch: MARK + "-b", version: "9.9.9",
+          message: { role: "user", content: [{ type: "text", text: MARK + "-said" }] } }),
+      ];
+      tools.forEach((name, i) => {
+        lines.push(JSON.stringify({ type: "assistant", sessionId: session, uuid: "a" + i,
+          timestamp: at(i * 2 + 1),
+          message: { role: "assistant", id: "m" + i, model: "claude-opus-5",
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900 * (i + 1),
+              cache_creation_input_tokens: 0 },
+            content: [{ type: "tool_use", id: "t" + i, name, input: { note: MARK + "-in" } }] } }));
+        lines.push(JSON.stringify({ type: "user", sessionId: session, uuid: "r" + i,
+          timestamp: at(i * 2 + 2),
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t" + i,
+            is_error: i === 1, content: MARK + "-out" }] } }));
+      });
+      const f = new File([lines.join("\n")], session + ".jsonl", { type: "application/x-ndjson" });
+      Object.defineProperty(f, "webkitRelativePath", {
+        value: `projects/${project}/${session}.jsonl`, configurable: true,
+      });
+      return f;
+    };
+
+    window.localStorage.removeItem("agenttape-local-index");
+    // Built once and reused: a fresh File gets a fresh lastModified, so
+    // rebuilding them would make the cache correctly consider them changed and
+    // the second pass below would be testing nothing.
+    const files = [
+      make("aaaa-1111", "-a-project", ["Bash", "Read", "Bash"]),
+      make("bbbb-2222", "-b-project", ["Write"]),
+    ];
+    const res = await api().indexFiles(files);
+    ok(res.sessions.length === 2, "the browser indexes what it was handed", String(res.sessions.length));
+    ok(res.indexed === 2 && res.cached === 0, "…parsing both the first time");
+
+    const rows = res.sessions as { project?: string; session?: string; tools?: Record<string, number> }[];
+    ok(rows.some((r) => r.project === "-a-project"),
+      "…splitting the project out of the path", rows.map((r) => r.project).join(","));
+    ok(rows.some((r) => (r.tools ?? {}).Bash === 2), "…and counting its tools");
+
+    // The cache is a new place data lands, so it gets the same marker test as
+    // every other artefact: nothing a transcript said may reach it.
+    const cached = window.localStorage.getItem("agenttape-local-index") ?? "";
+    ok(cached.length > 0, "the browser caches its index", `${cached.length} chars`);
+    ok(!cached.includes(MARK), "…and no transcript text reaches that cache",
+      cached.includes(MARK) ? cached.slice(cached.indexOf(MARK) - 40, cached.indexOf(MARK) + 20) : "");
+
+    const parsed = JSON.parse(cached) as { entries: Record<string, Record<string, unknown>> };
+    const stray: string[] = [];
+    for (const rec of Object.values(parsed.entries)) {
+      for (const [k, v] of Object.entries(rec)) {
+        if (typeof v === "string" && k !== "project" && k !== "session") stray.push(k);
+        if (Array.isArray(v) && v.some((x) => typeof x === "string") &&
+            k !== "models" && k !== "versions") stray.push(k);
+      }
+    }
+    ok(stray.length === 0, "…and every string in it is an identifier or a name",
+      [...new Set(stray)].join(", "));
+
+    // Second pass: the cache is used rather than ignored.
+    const again = await api().indexFiles(files);
+    ok(again.cached === 2 && again.indexed === 0, "a second pass comes from the cache",
+      `${again.cached} cached, ${again.indexed} parsed`);
+
+    window.localStorage.removeItem("agenttape-local-index");
+  }
 
   // ---- the overview, if the helper is answering ---------------------------
   {
