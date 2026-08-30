@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-dev/
 out/
 *.log
 .env*
@@ -25,3 +26,4 @@ docs/corpus-notes.md
 # own transcripts. Whether it is published is their call; the script that
 # produces it is committed so the figures can be redone.
 docs/findings.draft.md
+

@@ -500,6 +500,14 @@ days; one probe fixture spans 213 hours of wall-clock and holds about thirteen
 hours of work. Active duration, which drops every gap over two minutes, sits
 next to it for that reason.
 
+**`next dev` and `next build` no longer share a directory.** Development writes
+to `.next-dev`, `next build` and `next start` to `.next`, and `npm start` builds
+before it starts — so a production server cannot come up on a directory that a
+dev server rewrote underneath it. The failure this prevents reads as a corrupt
+install rather than as a race, which is why it cost three rounds before it was
+fixed; [`docs/build-directories.md`](docs/build-directories.md) is the paragraph
+that would have saved them.
+
 **CI does not run the in-page suite, and it has already cost something.**
 `node verify.mjs` and a production build run on every push; the browser
 assertions at `?selftest=1` need a browser driving a running server, and are
