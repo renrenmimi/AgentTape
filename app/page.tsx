@@ -533,10 +533,13 @@ export default function Page() {
   useEffect(() => {
     if (!view || !view.steps.length) return;
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t) return;
-      const tag = t.tagName;
-      const typing = tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable;
+      // Not a cast. A keydown dispatched on `window` rather than typed into an
+      // element — which is what a programmatic shortcut looks like — has a
+      // target that is not an element at all, and `t.closest` below throws on
+      // it. The old cast said otherwise and took the whole handler down.
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      const tag = t?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable === true;
 
       // Escape closes whatever is open, from anywhere including a text box.
       if (e.key === "Escape") {
@@ -561,7 +564,7 @@ export default function Page() {
       }
       if (e.key === "c" || e.key === "C") { e.preventDefault(); setComparing(true); return; }
       if (e.key === "a" || e.key === "A") { e.preventDefault(); setAsserting(true); return; }
-      if (t.closest(".track-hit")) return; // the slider owns its own arrow keys
+      if (t?.closest(".track-hit")) return; // the slider owns its own arrow keys
       const n = view.steps.length;
       const big = e.shiftKey ? 10 : 1;
       let next = pos;
