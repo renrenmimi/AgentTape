@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "helper": "node bin/agenttape.mjs",
-    "verify": "node verify.mjs"
+    "verify": "node verify.mjs",
+    "selftest": "node scripts/selftest.mjs"
   },
   "dependencies": {
     "next": "^15.3.0",

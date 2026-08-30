@@ -1854,6 +1854,64 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     String((st.match(/await until\(/g) ?? []).length));
 }
 
+// ---------------------------------------------------------------- a driver, and no dependency for it
+//
+// The in-page suite needs a browser. Next round it goes into CI sharing one
+// driver with the sibling project, so the driver has to exist as a committed
+// file that runs on a Linux runner without editing — and it has to cost
+// nothing, because a browser-automation library is what produced a hung launch
+// with zero output on this machine.
+
+{
+  const drv = read("scripts/selftest.mjs");
+  ok(drv !== "", "the driver is committed, not reconstructed each time it is needed");
+  ok(!/^import .* from "(?!node:)/m.test(drv),
+    "…and imports nothing that is not built into Node");
+  ok(Object.keys(pkg.devDependencies ?? {}).every((d) => /^(typescript|@types\/)/.test(d)),
+    "…and adds no devDependency either",
+    Object.keys(pkg.devDependencies ?? {}).join(", "));
+  ok(!/playwright|puppeteer|selenium|webdriver/i.test(JSON.stringify(pkg)),
+    "…and no browser-automation library is anywhere near this package");
+
+  // Portability, checked inside the candidate list rather than anywhere in the
+  // file. The first version of this matched the string in the *error message*
+  // that lists the same names, so deleting a candidate left it green.
+  const cands = drv.slice(drv.indexOf("const CANDIDATES"), drv.indexOf("].filter(Boolean)"));
+  ok(cands.length > 40, "the driver has a list of places Chrome might be");
+  for (const how of ["CHROME_PATH", "Google Chrome.app", "google-chrome", "chromium", "chromium-browser"]) {
+    ok(cands.includes(how), "…and looks for it by: " + how);
+  }
+
+  ok(/Emulation\.setDeviceMetricsOverride/.test(drv), "it sets a viewport rather than taking one");
+  ok(/Emulation\.setFocusEmulationEnabled/.test(drv),
+    "…and gives the window focus, so a focus assertion cannot pass for the wrong reason");
+  ok(/hasFocus/.test(drv),
+    "…with the measured reason written down rather than the usual claim about it");
+  ok(/Runtime\.exceptionThrown/.test(drv) && /consoleAPICalled/.test(drv),
+    "it watches the protocol for throws and console errors as a second pair of eyes");
+  ok(/process\.exit\(code\)/.test(drv) && /code = 1;/.test(drv) && /code = 2;/.test(drv),
+    "it exits non-zero on a failure and on a setup problem, differently");
+  ok(/── copy from here/.test(drv), "…and prints failures in the same paste-able shape as the checker");
+  ok(/res\.total !== res\.expected/.test(drv),
+    "…and treats a short run as a failure, not as a smaller number");
+  ok(/Nothing is serving/.test(drv),
+    "…and says so at once when nothing is serving, rather than after a timeout");
+  ok((pkg.scripts ?? {}).selftest === "node scripts/selftest.mjs",
+    "there is one command to run it", (pkg.scripts ?? {}).selftest ?? "missing");
+
+  // The workflow comment was true as an intention and false as a fact.
+  const wf = read(".github/workflows/ci.yml");
+  // Checked as the presence of the correction rather than the absence of the
+  // old wording: the old sentence is quoted in the new one, and an absence
+  // check on prose is a check anybody can dodge by rephrasing.
+  ok(/false as a fact/.test(wf) && /has never covered it/.test(wf),
+    "the workflow says what actually happens, not what was intended");
+  ok(/eighteen of its assertions were/.test(wf),
+    "…including the cost, in the number it cost");
+  ok(/scripts\/selftest\.mjs/.test(wf) && /round seven/.test(wf),
+    "…and names the gap, the driver that closes it, and when");
+}
+
 // ---------------------------------------------------------------- did every check run
 //
 // The audit the block above exists for. Every `ok(` in this file is a call site
