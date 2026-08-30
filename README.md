@@ -2,7 +2,11 @@
 
 [![ci](https://github.com/renrenmimi/AgentTape/actions/workflows/ci.yml/badge.svg)](https://github.com/renrenmimi/AgentTape/actions/workflows/ci.yml)
 
-**Replay a Claude Code session that already happened.**
+**AgentTape replays a Claude Code session that already happened, so you can see
+where a run went wrong instead of inferring it from a chat log.** It reads the
+transcript already sitting in `~/.claude/projects/` and shows you the messages
+array as it grew, the one step that blew up the context, the tool that failed
+and the forty minutes where nothing happened at all.
 
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
 `~/.claude/projects/` and parses it entirely in your browser: there is no
@@ -76,6 +80,10 @@ page remembers and finds it on its own.
 Not sure yet? Press **Load demo tape** on the empty state. It is a fictional
 run, invented end to end, with two tool failures, a context blow-up and a
 38-minute idle gap in it.
+
+Putting it on a host is prepared for and not done —
+[`docs/deploying.md`](docs/deploying.md) has the settings, and the measured list
+of what a deployed build loses (the helper, and nothing else).
 
 ### Checking a run from the command line
 
@@ -451,21 +459,22 @@ on the largest fixture, every surviving run of twelve characters is a tool name,
 a JSON seam, or the export's own documentation prose, and none is in the
 structural residue.
 
-**Assertions can only be about shape.** Rules read tool names, timings, token
-counts and error flags. There is no rule that can be about what was *said*,
-because nothing in the checker may read a body. "Did it search before writing"
-is answerable; "did it explain itself" is not.
-
 **A nested run is not the whole workbench.** Stepping into a delegated run gives
 you its timeline, its messages and its bodies. It does not give you the filter,
 the comparison, the assertions or the redaction export — those belong to the run
 you opened — and it does not descend into runs that run delegated in turn.
 
-**Cross-session statistics come from the helper.** The table of every session is
-built by the local helper walking `~/.claude/projects`, so it exists only when
-you are running locally with the helper started. A deployed build has no such
-thing and cannot: it has no filesystem to walk. The same goes for opening a
-session by clicking a row.
+**Cross-session statistics come from the helper, or from a folder you grant.**
+The table of every session is built either by the local helper walking
+`~/.claude/projects`, or — with no helper at all — by the browser, once you
+point it at that directory yourself. Both take the same code path and compute
+the same statistics. The browser one is slower cold (2.51 s against the
+helper's 1.99 s for 382 files) because it reads every file through the
+sandbox rather than the filesystem, and it needs a secure context: on plain
+HTTP `showDirectoryPicker` is absent and the `webkitdirectory` fallback takes
+over. What the browser one cannot do is *open* a session by clicking a row —
+that still needs the helper, because a granted folder gives statistics and the
+row needs the file.
 
 **The session index is cached, and the cache trusts size and mtime.** A
 transcript is only ever appended to, so a file whose size and modification time
@@ -491,10 +500,41 @@ days; one probe fixture spans 213 hours of wall-clock and holds about thirteen
 hours of work. Active duration, which drops every gap over two minutes, sits
 next to it for that reason.
 
-**CI does not run the in-page suite.** `node verify.mjs` and a production build
-run on every push; the browser assertions at `?selftest=1` need a browser
-driving a running server and are run by hand before each merge. A green tick
-does not cover them.
+**CI does not run the in-page suite, and it has already cost something.**
+`node verify.mjs` and a production build run on every push; the browser
+assertions at `?selftest=1` need a browser driving a running server, and are
+run by hand. A green tick does not cover them — and at the time of writing
+**eighteen of the 159 in-page assertions are failing on `main`**, and have been
+since the end of round four, with every CI run green throughout.
+
+The features themselves work: driven by hand, the shortcut sheet opens, the
+demo's compaction is marked, and a run compares clean against itself. What is
+broken is the harness's teardown between blocks — a block that loads a
+four-step synthetic tape restores the demo by awaiting a callback captured at
+first render, which does not mean React has re-rendered with the result, so the
+next block asserts against whatever was left loaded. Making that reset explicit
+and asserted was tried and made the count worse (139/161), so it is written down
+here rather than half-fixed. Two genuine bugs were found underneath it — both
+keyboard handlers threw an uncaught `TypeError` on a programmatic key press —
+and those are fixed, with `verify.mjs` now refusing the cast that caused them.
+
+**Deployment loses the helper and nothing else.** AgentTape is prepared for
+deployment and is not deployed. On a host that is not localhost the page never
+attempts a `127.0.0.1` request at all, so the session list, opening a session by
+row, and the helper-walked overview are gone; drag-and-drop, the demo, the
+workbench, the filter, the comparison, the assertions, the redacted export, the
+report and `/format` all work, as does the folder-granted overview. Measured
+against a production build served from a non-localhost origin, where the only
+host contacted was the origin itself. [`docs/deploying.md`](docs/deploying.md)
+has the settings and the numbers.
+
+**The format reference is generated from one file.** `/format` renders
+`docs/format-notes.md` at build time through a 200-line Markdown reader written
+for this, because a Markdown library would have been a fourth runtime
+dependency. It handles headings, paragraphs, lists, code, tables and rules, and
+nothing else — no images, no footnotes, no nested lists, no HTML passthrough.
+`verify.mjs` asserts the page renders that file rather than a second copy of
+the prose, which is what stops the two from drifting: there is only ever one.
 
 ## Roadmap
 
