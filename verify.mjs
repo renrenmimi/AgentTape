@@ -27,6 +27,7 @@ import {
 } from "./lib/subagents.ts";
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
 import { contextProfile, sessionStats } from "./lib/stats.ts";
+import { markdownReport, sparkline } from "./lib/report.ts";
 import {
   DEFAULT_RULES, RULES_FORMAT, checkAll, checkRule, parseRule, parseRuleSet,
   ruleLabel, serializeRuleSet, tally,
@@ -744,6 +745,85 @@ section("session statistics");
     "…and it carries forward rather than dropping to zero");
   ok(contextProfile([]).every((v) => v === 0), "an empty run profiles as flat");
 
+}
+
+// ------------------------------------------------------------------ report
+
+section("the pasteable report");
+{
+  // The same marker technique as the statistics record: a transcript where
+  // every text field is one distinctive string, and a report that must not
+  // contain it anywhere.
+  const MARK = "QQLEAKQQ";
+  const at = (n) => new Date(Date.parse("2026-09-09T09:00:00Z") + n * 1000).toISOString();
+  const marked = loadJsonlString([
+    JSON.stringify({ type: "custom-title", sessionId: "r", customTitle: MARK + "1" }),
+    JSON.stringify({ type: "user", sessionId: "r", uuid: "u0", timestamp: at(0), version: "9.9.9",
+      cwd: "/Users/" + MARK + "/x", gitBranch: MARK + "2",
+      message: { role: "user", content: [{ type: "text", text: MARK + "3" }] } }),
+    JSON.stringify({ type: "assistant", sessionId: "r", uuid: "u1", timestamp: at(3),
+      message: { role: "assistant", id: "m1", model: "claude-opus-5",
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 4000, cache_creation_input_tokens: 0 },
+        content: [{ type: "thinking", thinking: MARK + "4", signature: "s" }] } }),
+    JSON.stringify({ type: "assistant", sessionId: "r", uuid: "u2", timestamp: at(5),
+      message: { role: "assistant", id: "m1", model: "claude-opus-5",
+        content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: MARK + "5" } }] } }),
+    JSON.stringify({ type: "user", sessionId: "r", uuid: "u3", timestamp: at(9),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true,
+        content: MARK + "6" }] } }),
+    JSON.stringify({ type: "system", sessionId: "r", uuid: "u4", timestamp: at(12),
+      subtype: "compact_boundary", level: "info", content: MARK + "7",
+      compactMetadata: { preTokens: 4010, postTokens: 900, cumulativeDroppedTokens: 3110,
+        durationMs: 100, trigger: "auto" } }),
+    JSON.stringify({ type: "assistant", sessionId: "r", uuid: "u5", timestamp: at(15),
+      message: { role: "assistant", id: "m2", model: "claude-opus-5",
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 890, cache_creation_input_tokens: 0 },
+        content: [{ type: "tool_use", id: "t2", name: "Agent", input: { prompt: MARK + "8" } }] } }),
+    JSON.stringify({ type: "user", sessionId: "r", uuid: "u6", timestamp: at(40),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: MARK + "9" }] } }),
+  ].join("\n"), MARK + "-label.jsonl");
+
+  const mPairs = pairTools(marked.steps);
+  const mSum = summarise(marked);
+  const md = markdownReport({
+    tape: marked, summary: mSum,
+    trace: traceJump(marked.steps, mSum.jumpAt, mSum.jumpBy),
+    delegations: findDelegations(marked.steps, mPairs),
+    assertions: checkAll(marked.steps, DEFAULT_RULES, mPairs),
+    pairs: mPairs,
+    shownIndex: (i) => i + 1,
+  });
+
+  ok(!md.includes(MARK), "no text from a transcript reaches the report",
+    md.includes(MARK) ? md.slice(md.indexOf(MARK) - 40, md.indexOf(MARK) + 20) : "");
+  ok(marked.steps.some((x) => x.preview.includes(MARK)),
+    "…and the marker really was in the index it was built from");
+
+  // It has to actually say the useful things, or "leaks nothing" is trivial.
+  for (const [what, re] of [
+    ["the step and turn counts", /\| steps \| /],
+    ["the tool breakdown", /\| tool \| calls \| failed \|/],
+    ["the failures with their step numbers", /## Failures/],
+    ["the tool that failed, by name", /\| `Bash` \|/],
+    ["the context profile", /peak /],
+    ["the compaction", /Compacted 1 time/],
+    ["the delegation", /1 delegation/],
+    ["the assertions", /## Assertions/],
+    ["where it came from", /AgentTape/],
+  ]) {
+    ok(re.test(md), "the report carries " + what);
+  }
+  ok(!/preview|summary of the step/i.test(md), "…and no step summaries");
+
+  ok(sparkline([]) === "", "an empty profile has no sparkline");
+  ok(sparkline([0, 0, 0]) === "", "a flat zero profile has none either");
+  ok(sparkline([1, 2, 3, 4]).length === 4, "a profile becomes one block per point");
+  ok([...sparkline([1, 8])].every((c) => "▁▂▃▄▅▆▇█".includes(c)),
+    "…drawn only from blocks that survive a paste");
+
+  const reportSrc = readFileSync(join(root, "lib/report.ts"), "utf8")
+    .replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  ok(!/\.preview\b|\bbody\b/.test(reportSrc), "the report module never reaches for a body or a preview");
 }
 
 // ---------------------------------------------------------------- rule sets

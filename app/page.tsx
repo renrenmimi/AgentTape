@@ -18,6 +18,7 @@ import {
   type Filter,
 } from "@/lib/filter";
 import { DEFAULT_RULES, checkAll, tally, type Rule } from "@/lib/assert";
+import { markdownReport } from "@/lib/report";
 import {
   agentIdFromName, delegationSummary, findDelegations, pairBySidecar, pairByTime, summariseRun,
   type Delegation, type SubRun,
@@ -446,6 +447,31 @@ export default function Page() {
     }
   }, [loadTapeJson]);
 
+  /**
+   * The session, written down. Structure and counts only, which is a property
+   * of lib/report.ts rather than of this handler — it is never given a body.
+   */
+  const [copied, setCopied] = useState(false);
+  const onReport = useCallback(async () => {
+    if (!tape || !summary) return;
+    const text = markdownReport({
+      tape, summary, trace: jumpTrace, delegations, assertions, pairs, shownIndex,
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission is not guaranteed; a download always works.
+      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "session-report.md";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }, [tape, summary, jumpTrace, delegations, assertions, pairs, shownIndex]);
+
   const onExport = useCallback(async () => {
     if (!tape) return;
     setExporting(true);
@@ -611,6 +637,9 @@ export default function Page() {
       get assertions() { return assertions; },
       get rules() { return rules; },
       setRules,
+      reportText: () => (tape && summary
+        ? markdownReport({ tape, summary, trace: jumpTrace, delegations, assertions, pairs, shownIndex })
+        : ""),
       get delegations() { return delegations; },
       get origin() { return origin; },
       loadSubagent,
@@ -620,7 +649,8 @@ export default function Page() {
     if (!selftest) return;
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
-  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting]);
+  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting,
+      jumpTrace, shownIndex, summary]);
 
   // ---- render -------------------------------------------------------------
 
@@ -752,6 +782,8 @@ export default function Page() {
         onExport={onExport}
         onClose={reset}
         onCompare={() => setComparing(true)}
+        onReport={onReport}
+        copied={copied}
         assertions={tally(assertions)}
         onAssert={() => setAsserting(true)}
         onKeys={() => setKeysOpen(true)}

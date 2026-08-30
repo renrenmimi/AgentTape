@@ -24,6 +24,8 @@ type Props = {
   assertions: { pass: number; fail: number; vacuous: number };
   onAssert: () => void;
   onKeys: () => void;
+  onReport: () => void;
+  copied: boolean;
   exporting: boolean;
 };
 
@@ -40,7 +42,7 @@ function Stat({ k, v, sub, risk }: { k: string; v: string; sub?: string; risk?: 
 }
 
 export default function SummaryStrip({
-  tape, summary, delegations, assertions, onExport, onClose, onCompare, onAssert, onKeys,
+  tape, summary, delegations, assertions, onExport, onClose, onCompare, onAssert, onKeys, onReport, copied,
   exporting,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
@@ -127,6 +129,14 @@ export default function SummaryStrip({
         </button>
         <button type="button" className="btn btn-sm" onClick={onCompare}>
           Compare
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onReport}
+          title="A Markdown summary of this session — counts and structure, no message text"
+        >
+          {copied ? "Copied" : "Report"}
         </button>
         <button type="button" className="btn btn-sm" onClick={onExport} disabled={exporting}>
           {exporting ? "Exporting…" : "Export redacted tape"}

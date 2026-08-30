@@ -34,6 +34,7 @@ type Api = {
   setKeysOpen: (b: boolean) => void;
   keysOpen: boolean;
   setInside: (n: number) => void;
+  reportText: () => string;
   attachSyntheticRun?: () => void;
   assertions: { pass: boolean; vacuous: boolean; at: number }[];
   rules: unknown[];
@@ -244,6 +245,33 @@ export async function runSelfTest(): Promise<void> {
 
     await a.onDemo();
     await settle(6);
+  }
+
+  // ---- a report you can paste ---------------------------------------------
+  {
+    const btn = [...document.querySelectorAll(".strip-actions button")]
+      .find((b) => /^report$/i.test((b.textContent ?? "").trim()));
+    ok(!!btn, "the header offers a report");
+    ok(!!btn?.getAttribute("title"), "…and says what is in it");
+
+    const md = api().reportText();
+    ok(md.length > 200, "the report has something in it", `${md.length} chars`);
+    const wants: [string, RegExp][] = [
+      ["a session table", /\| steps \|/],
+      ["a tool breakdown", /\| tool \| calls \| failed \|/],
+      ["failures with step numbers", /## Failures/],
+      ["a context profile", /peak /],
+      ["its provenance", /AgentTape/],
+    ];
+    for (const [what, re] of wants) ok(re.test(md), "the report carries " + what);
+
+    // The demo tape is fiction, but it is fiction with words in it, and none of
+    // them may appear in something built to be pasted into an issue.
+    for (const phrase of ["applyDiscount", "coupon", "line item", "npm test"]) {
+      ok(!md.includes(phrase), `no demo prose in the report: "${phrase}"`);
+    }
+    ok(!/`[a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+/i.test(md.replace(/`[▁▂▃▄▅▆▇█]+`/g, "")),
+      "…and nothing that reads like a sentence in a code span");
   }
 
   // ---- assertions ---------------------------------------------------------
