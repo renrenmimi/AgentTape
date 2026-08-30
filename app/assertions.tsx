@@ -7,10 +7,11 @@
 // the tape actually contains. The moment this needs a parser, the thing under
 // test has stopped being the run.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Step } from "@/lib/format";
 import { DEFAULT_RULES, checkAll, type Rule, type RuleResult } from "@/lib/assert";
 import { fmtInt } from "@/lib/summary";
+import { useDialogFocus } from "./dialog";
 
 type Props = {
   steps: Step[];
@@ -147,9 +148,13 @@ export default function Assertions({
   steps, tools, rules, onRules, pairs, shownIndex, onGo, onClose,
 }: Props) {
   const results = useMemo(() => checkAll(steps, rules, pairs), [steps, rules, pairs]);
+  const panel = useRef<HTMLDivElement>(null);
+
+  useDialogFocus(panel);
 
   return (
-    <div className="asserts" role="dialog" aria-modal="true" aria-label="Assertions about this run">
+    <div className="asserts" role="dialog" aria-modal="true" aria-label="Assertions about this run"
+      tabIndex={-1} ref={panel}>
       <div className="cmp-head">
         <span className="eyebrow">assertions</span>
         <span className="cmp-name">

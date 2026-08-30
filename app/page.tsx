@@ -33,6 +33,7 @@ import MessagesPanel from "./messages-panel";
 import StepDetail from "./step-detail";
 import Compare from "./compare";
 import Assertions from "./assertions";
+import Shortcuts from "./shortcuts";
 import FilterBar from "./filter-bar";
 import { runSelfTest } from "./selftest";
 
@@ -53,6 +54,7 @@ export default function Page() {
   const [comparing, setComparing] = useState(false);
   const [asserting, setAsserting] = useState(false);
   const [rules, setRules] = useState<Rule[]>(DEFAULT_RULES);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; lines: number; label: string } | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -461,9 +463,32 @@ export default function Page() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t) return;
-      if (t.closest(".track-hit")) return; // the slider owns its own keys
       const tag = t.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable) return;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable;
+
+      // Escape closes whatever is open, from anywhere including a text box.
+      if (e.key === "Escape") {
+        if (keysOpen) { setKeysOpen(false); e.preventDefault(); }
+        else if (asserting) { setAsserting(false); e.preventDefault(); }
+        else if (comparing) { setComparing(false); e.preventDefault(); }
+        else if (typing) (t as HTMLInputElement).blur();
+        return;
+      }
+      if (typing) return;
+      // While an overlay is up it owns the keyboard; only Escape gets through.
+      if (keysOpen || asserting || comparing) {
+        if (e.key === "?") { setKeysOpen((v) => !v); e.preventDefault(); }
+        return;
+      }
+      if (e.key === "?") { setKeysOpen(true); e.preventDefault(); return; }
+      if (e.key === "/") {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>("input.filter-input")?.focus();
+        return;
+      }
+      if (e.key === "c" || e.key === "C") { e.preventDefault(); setComparing(true); return; }
+      if (e.key === "a" || e.key === "A") { e.preventDefault(); setAsserting(true); return; }
+      if (t.closest(".track-hit")) return; // the slider owns its own arrow keys
       const n = view.steps.length;
       const big = e.shiftKey ? 10 : 1;
       let next = pos;
@@ -481,7 +506,7 @@ export default function Page() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, pos, setPos, seekNext]);
+  }, [view, pos, setPos, seekNext, keysOpen, asserting, comparing]);
 
   // Focus the playhead once a tape is open so the keys work without a click.
   useEffect(() => {
@@ -516,6 +541,8 @@ export default function Page() {
       setComparing,
       get comparing() { return comparing; },
       setAsserting,
+      setKeysOpen,
+      get keysOpen() { return keysOpen; },
       get assertions() { return assertions; },
       get rules() { return rules; },
       setRules,
@@ -528,7 +555,7 @@ export default function Page() {
     if (!selftest) return;
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
-  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules]);
+  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting]);
 
   // ---- render -------------------------------------------------------------
 
@@ -550,6 +577,7 @@ export default function Page() {
 
   return (
     <main className="tape">
+      {keysOpen && <Shortcuts onClose={() => setKeysOpen(false)} />}
       {asserting && (
         <Assertions
           steps={tape.steps}
@@ -580,6 +608,7 @@ export default function Page() {
         onCompare={() => setComparing(true)}
         assertions={tally(assertions)}
         onAssert={() => setAsserting(true)}
+        onKeys={() => setKeysOpen(true)}
         exporting={exporting}
       />
 

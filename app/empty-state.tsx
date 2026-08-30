@@ -43,9 +43,40 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, progress, er
       <div className="drop-card">
         <h1>AgentTape</h1>
         <p className="lede">
-          Open a Claude Code session that already happened and replay it: the messages array as
-          it grew, where the tokens went, and which step was the first to go wrong.
+          Open a Claude Code session that already happened and replay it. Nothing to instrument,
+          nothing to set up before the run — the transcript is already on your disk.
         </p>
+
+        <ul className="can-do">
+          <li><b>Watch the messages array grow</b>, step by step, with the token cost of each entry.</li>
+          <li><b>Find the step that blew up the context</b> — and see whether that payload is still
+            being re-sent every turn since.</li>
+          <li><b>Search and filter</b> by tool, by payload size, by text, and step through the
+            matches or the failures.</li>
+          <li><b>See inside delegated work.</b> A session that hands a job to a subagent keeps only
+            the summary; the rest is in a file beside it.</li>
+          <li><b>Compare two runs</b> and find where they stopped agreeing.</li>
+          <li><b>Assert what a run should have done</b> — search before write, a context ceiling,
+            no tool called five times in a row.</li>
+          <li><b>Export a structure-only tape</b> that is safe to attach to a bug report.</li>
+        </ul>
+
+        <p className="lede lede-cta">
+          Never seen it? <b>Load the demo tape</b> — a fictional run with two tool failures, a
+          context blow-up, a compaction, a delegation and a 38-minute silence in it.
+        </p>
+
+        {progress && (
+          <>
+            <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+              aria-valuenow={Math.round(progress.pct)} aria-label="Parsing progress">
+              <i style={{ width: progress.pct + "%" }} />
+            </div>
+            <p className="empty-note">
+              {progress.label} · {fmtInt(progress.lines)} lines · {Math.round(progress.pct)}%
+            </p>
+          </>
+        )}
 
         <div
           className={"dropzone" + (over ? " over" : "")}
@@ -60,24 +91,12 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, progress, er
           </span>
         </div>
 
-        {progress && (
-          <>
-            <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
-              aria-valuenow={Math.round(progress.pct)} aria-label="Parsing progress">
-              <i style={{ width: progress.pct + "%" }} />
-            </div>
-            <p className="empty-note">
-              {progress.label} · {fmtInt(progress.lines)} lines · {Math.round(progress.pct)}%
-            </p>
-          </>
-        )}
-
         <div className="drop-actions">
-          <button type="button" className="btn btn-accent" onClick={() => input.current?.click()}>
-            Choose a file
+          <button type="button" className="btn btn-accent btn-lead" onClick={onDemo}>
+            Load the demo tape
           </button>
-          <button type="button" className="btn" onClick={onDemo}>
-            Load demo tape
+          <button type="button" className="btn" onClick={() => input.current?.click()}>
+            Choose a file
           </button>
           <input
             ref={input}
