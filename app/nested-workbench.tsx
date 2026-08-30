@@ -61,8 +61,13 @@ export default function NestedWorkbench({ run, parentStep, onClose }: Props) {
   // Arrows and n/p, scoped to this overlay. Escape is the page's job.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || !panel.current?.contains(t)) return;
+      // A keydown dispatched on `window` — which is what a shortcut sent by
+      // the page itself looks like, and what the self-test sends — has a
+      // target that is not a Node at all. `contains` throws on one rather
+      // than returning false, so the cast this used to do was a lie that
+      // took the whole handler down with it.
+      const t = e.target;
+      if (!(t instanceof HTMLElement) || !panel.current?.contains(t)) return;
       if (t.closest(".track-hit")) return;
       const tag = t.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable) return;

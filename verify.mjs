@@ -1663,5 +1663,25 @@ ok(/22\.18/.test(readme), "the README states the Node version the checker needs"
 ok(/node bin\/agenttape\.mjs check /.test(readme), "…and gives the check command as one line");
 ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they can copy");
 
+// `e.target` is not an element. It is whatever the event was dispatched on,
+// and a keydown sent programmatically is dispatched on `window` — which has no
+// `closest` and is not a `Node`, so `contains` throws on it. Both keyboard
+// handlers in this app used to cast the target to `HTMLElement` and then call
+// those methods, which meant any such keydown took the whole handler down with
+// an uncaught TypeError. A cast is not a check; this asserts nobody writes one
+// back in.
+{
+  const casts = [];
+  for (const f of files.filter((f) => /\/app\/.*\.tsx?$/.test(f))) {
+    const src = readFileSync(f, "utf8");
+    if (!/addEventListener\("keydown"/.test(src)) continue;
+    if (/e\.target as HTML|e\.target as Element|e\.target as Node/.test(src)) {
+      casts.push(f.replace(root, ""));
+    }
+  }
+  ok(casts.length === 0,
+    "no keyboard handler casts e.target instead of narrowing it", casts.join(", "));
+}
+
 console.log(`\n${checked - failed}/${checked} checks passed`);
 process.exit(failed ? 1 : 0);
