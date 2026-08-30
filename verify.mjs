@@ -1788,6 +1788,21 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   const st = read("app/selftest.ts");
   const declared = st.match(/const DECLARED_ASSERTIONS = (\d+);/);
   ok(!!declared, "the in-page suite declares how many assertions it runs");
+
+  // The static half. The declared total is accumulated during the run and
+  // therefore cannot see an assertion that is written and never reached; this
+  // one counts call sites in the source and cannot see how many times a loop
+  // goes round. Neither is sufficient and together they are.
+  const CALL = /(?:^|[^\w.$])(ok|skip)\(/;
+  const callSites = st.split("\n")
+    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+    .filter((l) => CALL.test(l))
+    .filter((l) => !/const (ok|skip)\s*=|ok:\s|skip:\s|skipped/.test(l)).length;
+  const declaredSites = Number(st.match(/DECLARED_CALL_SITES = (\d+);/)?.[1] ?? -1);
+  ok(declaredSites > 100, "…and how many call sites it has", String(declaredSites));
+  ok(callSites === declaredSites,
+    "…and the source contains exactly that many",
+    `${callSites} counted, ${declaredSites} declared`);
   ok(Number(declared?.[1]) > 100, "…and the number is the real one, not a placeholder",
     declared?.[1] ?? "missing");
   ok(/results\.length \+ 1 === want\.total/.test(st),
@@ -2029,6 +2044,38 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(/docs\/build-directories\.md/.test(readme), "…and the README points at it");
 }
 
+// ---------------------------------------------------------------- the counters can be broken
+//
+// A counter nobody has ever broken is a counter nobody knows counts. This
+// project's own audit tool was wrong twice in one round — an off-by-one stack
+// frame reported three hundred dead lines, then a regex matching comments
+// reported six — and an instrument that is wrong and an injection that misses
+// are the same failure. `npm run counters` is the check for that failure.
+
+{
+  const g = read("scripts/counters.mjs");
+  ok(g !== "", "the counter guard is committed");
+  ok(!/^import .* from "(?!node:)/m.test(g), "…and imports nothing that is not built into Node");
+  for (const [what, re] of [
+    ["an assertion appended after process.exit", /appended after process\.exit/],
+    ["an assertion deleted", /an assertion deleted/],
+    ["a check defined and never called", /defined and never called/],
+    ["the in-page suite gaining an assertion", /gains an assertion without updating/],
+    ["an unmutated copy still passing", /an unmutated copy still passes/],
+  ]) ok(re.test(g), "…and breaks the counting by: " + what);
+
+  // Caught is not the same as caught by the right thing.
+  ok(/c\.expect\.test\(r\.out\)/.test(g),
+    "…and requires each break to fail the check that is supposed to catch it");
+  ok(/changed nothing — it missed/.test(g),
+    "…and treats a mutation that edited nothing as a miss, not as a pass");
+  ok(/process\.exit\(failed \? 1 : 0\)/.test(g), "…and exits non-zero when one is not caught");
+  ok((pkg.scripts ?? {}).counters === "node scripts/counters.mjs",
+    "there is one command to run it", (pkg.scripts ?? {}).counters ?? "missing");
+  ok(/npm run counters/.test(read(".github/workflows/ci.yml")),
+    "…and CI runs it, since it needs no browser");
+}
+
 // ---------------------------------------------------------------- did every check run
 //
 // The audit the block above exists for. Every `ok(` in this file is a call site
@@ -2060,11 +2107,24 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(self > 0 && sites.length > 20,
     "the reachability audit can see this file's own call sites",
     `${sites.length} call sites, marker at line ${self}`);
-  ok(mine.length === 3, "…and only its own three assertions sit below the marker",
+  // Three from the audit itself, one from the declared-total check that has to
+  // run after every other assertion in the file has been counted.
+  ok(mine.length === 4, "…and only its own assertions sit below the marker",
     `${mine.length} below line ${self}`);
   ok(dead.length === 0, "every assertion in verify.mjs actually ran",
     dead.length ? `never ran: line ${dead.join(", line ")}` : "");
 }
+
+// ---------------------------------------------------------------- how many checks there are
+//
+// The accumulated counter. Nothing else here notices an assertion being
+// deleted: the total simply comes out smaller and every remaining check still
+// passes. Declaring it turns a deletion into a failure, at the cost of one
+// number that has to move when the file does — which is the correct trade,
+// because the alternative is a suite that shrinks without saying so.
+const EXPECTED_CHECKS = 563;
+ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
+  `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
 console.log(`\n${checked - failed}/${checked} checks passed`);
 process.exit(failed ? 1 : 0);

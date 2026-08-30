@@ -350,6 +350,18 @@ const DECLARED_ASSERTIONS = 168;
  * changes is not. Asking for the helper mode without a helper is a failure
  * rather than a skip: the mode was requested and could not be delivered.
  */
+/**
+ * How many `ok(` and `skip(` call sites this file contains.
+ *
+ * The second counter, and the reason there has to be one. The declared total
+ * above is accumulated while the suite runs, so it cannot see an assertion that
+ * is written and never reached — the source still contains it and the run
+ * simply never gets there. This one is counted statically by verify.mjs, from
+ * outside, and the two have to move together. Adding an assertion means
+ * changing both numbers, deliberately, in the same commit.
+ */
+export const DECLARED_CALL_SITES = 161;
+
 const HELPER_MODE =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("helper");
 const MODE = HELPER_MODE ? "helper" : "no-helper";
