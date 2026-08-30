@@ -1166,8 +1166,12 @@ for (const [what, re] of [
   ["CI does not run the in-page suite", /CI does not run the in-page suite/i],
   ["the comparison's blind spot", /blind spot follows from the rule/i],
   ["what a nested run still does not show", /nested run is not the whole workbench/i],
-  ["that cross-session statistics need the helper", /statistics come from the helper/i],
-  ["…and are unavailable in a deployed build", /deployed build has no such/i],
+  ["that cross-session statistics need the helper or a granted folder",
+    /statistics come from the helper, or from a folder you grant/i],
+  ["…and that a deployed build loses the helper and only the helper",
+    /deployment loses the helper and nothing else/i],
+  ["that CI has already missed something by not opening a browser",
+    /failing on `main`/i],
   ["what the session cache trusts", /trusts size and mtime/i],
   ["that an assertion can only be about shape", /assertion can only be about shape/i],
   ["that a report and a rule set carry tool names", /carry tool names/i],
@@ -1681,6 +1685,51 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   }
   ok(casts.length === 0,
     "no keyboard handler casts e.target instead of narrowing it", casts.join(", "));
+}
+
+// ---------------------------------------------------------------- prepared to deploy, not deployed
+//
+// The deployment note makes claims about a build nobody here has run on a host.
+// Each of the checkable ones is checked, so the note cannot quietly go stale
+// the first time somebody adds a route.
+
+{
+  const deploy = read("docs/deploying.md");
+  ok(deploy !== "", "the deployment note exists");
+  ok(/not deployed/i.test(deploy), "…and says out loud that this is not deployed");
+
+  // "Environment variables: none" is a fact about the source, so read the source.
+  const envUsers = files
+    .filter((f) => /\/(app|lib)\/.*\.(ts|tsx)$/.test(f))
+    .filter((f) => /process\.env/.test(readFileSync(f, "utf8")))
+    .map((f) => f.replace(root, ""));
+  ok(envUsers.length === 0, "the app reads no environment variable, as the note claims",
+    envUsers.join(", "));
+
+  // Static everywhere is what makes the "no serverless functions" claim true.
+  const serverBits = files
+    .map((f) => f.replace(root, ""))
+    .filter((f) => /^app\/.*\/(route|middleware)\.tsx?$/.test(f) || /^middleware\.tsx?$/.test(f));
+  ok(serverBits.length === 0, "…and has no API route or middleware to make it dynamic",
+    serverBits.join(", "));
+
+  // The one build-time filesystem read is fine; a request-time one would not be.
+  const fmtPageSrc = read("app/format/page.tsx");
+  ok(!/force-dynamic|revalidate\s*=/.test(fmtPageSrc),
+    "…and the one page that reads a file does it at build time, not per request");
+
+  ok(/docs\/deploying\.md/.test(readme), "the README points at the deployment note");
+}
+
+// Two sentences at the top saying what this is for, before any claim about it.
+{
+  const body = readme.slice(readme.indexOf("]("));   // past the badge
+  const opening = body.slice(body.indexOf("**"), body.indexOf("Your transcripts"));
+  ok(opening.length > 200, "the README opens with prose, not with a slogan", String(opening.length));
+  ok(/replays? a Claude Code session/i.test(opening),
+    "…that says what the tool does in its first sentence");
+  ok(/(so you can|instead of|shows you)/i.test(opening),
+    "…and what it is for, rather than only what it is");
 }
 
 console.log(`\n${checked - failed}/${checked} checks passed`);
