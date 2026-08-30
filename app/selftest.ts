@@ -178,6 +178,33 @@ export async function runSelfTest(): Promise<void> {
     ok(false, "the demo tape contains at least one failed step");
   }
 
+  // ---- the array delta ----------------------------------------------------
+  {
+    const rows = () => [...document.querySelectorAll(".delta dt")].map((e) => (e.textContent ?? "").trim());
+    api().setPos(0);
+    await settle(3);
+    ok(document.querySelector(".delta") !== null, "the step detail carries an array delta");
+    ok(rows().join(",") === "appended,carried,context,array now",
+      "the delta reads as a delta rather than a second messages panel", rows().join(","));
+
+    const readDd = () => [...document.querySelectorAll(".delta dd")].map((e) => (e.textContent ?? "").trim());
+    const first = readDd();
+    ok(/entry 1\b/.test(first[0]), "the first step appends the first entry", first[0]);
+
+    // Somewhere in the demo an assistant turn spans several lines; the second
+    // of them must extend the entry rather than append a new one.
+    let extended = "";
+    for (let i = 1; i < Math.min(n, 40); i++) {
+      api().setPos(i);
+      await settle(2);
+      const d = readDd();
+      if (/a block to entry/.test(d[0])) { extended = d[0]; break; }
+    }
+    ok(extended !== "", "a step that extends an entry says so rather than claiming a new one", extended);
+    api().setPos(0);
+    await settle(2);
+  }
+
   // ---- filtering ----------------------------------------------------------
   {
     const ticksBefore = countPaintedTicks(n);

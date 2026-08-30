@@ -20,6 +20,7 @@ import { redactTape, redactStep, auditRedacted, placeholder, scrubName } from ".
 import { tapeFromFile, serializeTape, TAPE_FORMAT } from "./lib/tape.ts";
 import { summarise } from "./lib/summary.ts";
 import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek } from "./lib/filter.ts";
+import { cumulativeChars, deltaAt } from "./lib/delta.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -432,6 +433,44 @@ section("filtering");
   ok(seek(mask, last, 1) === -1, "seek forward stops at the end rather than wrapping");
   ok(seek(mask, tape.steps.length, -1) === last, "seek back finds the last match");
   ok(seek(mask, first, -1) === -1, "seek back stops at the start");
+}
+
+// ---------------------------------------------------------------- step delta
+
+section("step delta");
+{
+  const cum = cumulativeChars(tape.steps);
+  const at = (i) => deltaAt(tape.steps, cum, i);
+
+  ok(at(999999) === null, "a step past the end has no delta");
+  ok(at(0).ctxBefore === 0, "the first step starts from an empty context");
+  ok(at(0).newEntry === true, "the first step opens the array");
+
+  ok(cum[tape.steps.length] === tape.steps.reduce((a, s) => a + s.chars, 0),
+    "the running character total is the sum of every step");
+  const last = at(tape.steps.length - 1);
+  ok(last.charsSoFar === cum[tape.steps.length], "the last step reports the whole total");
+
+  // Three assistant lines share one message.id, so the first opens an entry and
+  // the next two extend it. That is the distinction the readout exists to make.
+  const group = tape.entries.find((e) => e.to > e.from);
+  ok(!!group, "the fixture has an entry built from several lines");
+  ok(at(group.from).newEntry === true, "the first line of a group appends an entry");
+  ok(at(group.from + 1).newEntry === false, "the next line extends it rather than appending");
+  ok(at(group.from + 1).entry === group.i, "…and reports the same entry");
+
+  // The context delta must be signed, since a compaction makes it negative.
+  const compactStep = tape.steps.find((s) => s.compact);
+  const after = tape.steps.find((s) => s.i > compactStep.i && s.usage);
+  if (after) {
+    const d = at(after.i);
+    ok(d.ctxDelta === d.ctxAfter - d.ctxBefore, "the context delta is the difference it claims");
+  }
+  const jump = at(S.jumpAt);
+  ok(jump.ctxDelta === S.jumpBy, "the delta at the marked jump matches the summary", `${jump.ctxDelta} vs ${S.jumpBy}`);
+
+  const carried = at(group.from);
+  ok(carried.chars === tape.steps[group.from].chars, "the delta carries this step's characters, not the entry's");
 }
 
 // ---------------------------------------------------------------- the demo
