@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BODY_WINDOW, INLINE_BODY_LIMIT, type Step, type StepBody, type Tape } from "@/lib/format";
 import { fmtBytes, fmtClock, fmtDate, fmtDuration, fmtInt, fmtTokens } from "@/lib/summary";
+import { cumulativeChars, deltaAt } from "@/lib/delta";
 import { KIND_LABEL } from "./glyphs";
 
 const HUGE = 262144; // above this, offer a download rather than a reveal
@@ -30,6 +31,9 @@ type Props = {
   /** What to call a step on screen — its position in the visible view. */
   shownIndex: (globalIndex: number) => number;
 };
+
+/** Signed, so a context drop across a compaction reads as a drop. */
+const signed = (n: number) => (n > 0 ? "+" : n < 0 ? "−" : "") + fmtTokens(Math.abs(n));
 
 function durationBetween(a: Step, b: Step): number {
   if (a.ts !== null && b.ts !== null) return b.ts - a.ts;
@@ -130,6 +134,8 @@ function BodyView({ body, title, step }: { body: StepBody | null; title: string;
 export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIndex }: Props) {
   const steps = tape.steps;
   const step = steps[curStep];
+  const cum = useMemo(() => cumulativeChars(steps), [steps]);
+  const delta = deltaAt(steps, cum, curStep);
   const [body, setBody] = useState<StepBody | null>(null);
   const [mateBody, setMateBody] = useState<StepBody | null>(null);
   const token = useRef(0);
@@ -260,6 +266,51 @@ export default function StepDetail({ tape, curStep, pairs, onSelectStep, shownIn
                   <span style={{ color: "var(--text-3)" }}>not found in this transcript</span>
                 )}
               </span>
+            </div>
+          )}
+
+          {delta && (
+            <div className="delta" aria-label="What this step added to the messages array">
+              <span className="eyebrow">array delta</span>
+              <dl>
+                <dt>appended</dt>
+                <dd>
+                  {delta.entry < 0 ? (
+                    <span className="delta-dim">nothing — this record is not part of the array</span>
+                  ) : delta.newEntry ? (
+                    <>entry {fmtInt(delta.entry + 1)}<span className="delta-dim"> · {delta.role}</span></>
+                  ) : (
+                    <>
+                      <span className="delta-dim">a block to entry </span>
+                      {fmtInt(delta.entry + 1)}
+                    </>
+                  )}
+                </dd>
+
+                <dt>carried</dt>
+                <dd>
+                  {fmtInt(delta.chars)}<span className="delta-dim"> chars</span>
+                  {delta.output > 0 && (
+                    <>{" · "}{fmtTokens(delta.output)}<span className="delta-dim"> out</span></>
+                  )}
+                </dd>
+
+                <dt>context</dt>
+                <dd>
+                  {fmtTokens(delta.ctxBefore)} → {fmtTokens(delta.ctxAfter)}
+                  {delta.ctxDelta !== 0 && (
+                    <b className={delta.ctxDelta > 0 ? "delta-up" : "delta-down"}>
+                      {" "}{signed(delta.ctxDelta)}
+                    </b>
+                  )}
+                </dd>
+
+                <dt>array now</dt>
+                <dd>
+                  {fmtInt(Math.max(0, delta.entriesSoFar))}<span className="delta-dim"> entries · </span>
+                  {fmtInt(delta.charsSoFar)}<span className="delta-dim"> chars</span>
+                </dd>
+              </dl>
             </div>
           )}
 
