@@ -11,6 +11,7 @@ import { fmtBytes, fmtDuration, fmtInt } from "@/lib/summary";
 import { isLocal, useHelperSessions, type HelperSession } from "./helper";
 
 type Props = {
+  onOverview: () => void;
   /** Several at once: a transcript plus the agent-*.jsonl files beside it. */
   onFiles: (files: File[]) => void;
   onHelperPick: (session: HelperSession) => void;
@@ -19,7 +20,7 @@ type Props = {
   error: string;
 };
 
-export default function EmptyState({ onFiles, onHelperPick, onDemo, progress, error }: Props) {
+export default function EmptyState({ onFiles, onHelperPick, onDemo, onOverview, progress, error }: Props) {
   const [over, setOver] = useState(false);
   const { sessions, probing, asked, failed, probe } = useHelperSessions();
   // Whether the helper block belongs on the page depends on `location`, which
@@ -126,6 +127,11 @@ export default function EmptyState({ onFiles, onHelperPick, onDemo, progress, er
               {!probing && (sessions === null || failed) && (
                 <button type="button" className="btn btn-sm" onClick={probe}>
                   {asked ? "Look again" : "Look for it"}
+                </button>
+              )}
+              {!probing && sessions && sessions.length > 0 && (
+                <button type="button" className="btn btn-sm" onClick={onOverview}>
+                  All sessions, by the numbers
                 </button>
               )}
             </div>

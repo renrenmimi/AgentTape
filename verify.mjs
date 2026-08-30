@@ -26,6 +26,7 @@ import {
   isDelegation, pairBySidecar, pairByTime, summariseRun,
 } from "./lib/subagents.ts";
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
+import { contextProfile, sessionStats } from "./lib/stats.ts";
 import {
   DEFAULT_RULES, RULES_FORMAT, checkAll, checkRule, parseRule, parseRuleSet,
   ruleLabel, serializeRuleSet, tally,
@@ -667,6 +668,84 @@ section("assertions");
   ok(!/\bbody\b|\.preview\b/.test(assertSrc), "no rule reaches for a body or a preview");
 }
 
+// ------------------------------------------------------- session statistics
+
+section("session statistics");
+{
+  // A transcript in which *every* text field is a distinctive marker. If any of
+  // them reaches the statistics record, the record is not what it claims to be.
+  const MARK = "ZZMARKERZZ";
+  const at = (n) => new Date(Date.parse("2026-08-08T09:00:00Z") + n * 1000).toISOString();
+  const lines = [
+    JSON.stringify({ type: "custom-title", sessionId: "s", customTitle: MARK + "-title" }),
+    JSON.stringify({ type: "ai-title", sessionId: "s", aiTitle: MARK + "-aititle" }),
+    JSON.stringify({ type: "last-prompt", sessionId: "s", lastPrompt: MARK + "-prompt", leafUuid: "u0" }),
+    JSON.stringify({ type: "user", sessionId: "s", uuid: "u0", timestamp: at(0), version: "9.9.9",
+      cwd: "/Users/" + MARK + "/work", gitBranch: MARK + "-branch",
+      message: { role: "user", content: [{ type: "text", text: MARK + "-said" }] } }),
+    JSON.stringify({ type: "assistant", sessionId: "s", uuid: "u1", timestamp: at(4),
+      message: { role: "assistant", id: "m1", model: "claude-opus-5",
+        usage: { input_tokens: 20, output_tokens: 10, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 },
+        content: [{ type: "thinking", thinking: MARK + "-thought", signature: "s" }] } }),
+    JSON.stringify({ type: "assistant", sessionId: "s", uuid: "u2", timestamp: at(6),
+      message: { role: "assistant", id: "m1", model: "claude-opus-5",
+        content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: MARK + "-command" } }] } }),
+    JSON.stringify({ type: "user", sessionId: "s", uuid: "u3", timestamp: at(9),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true,
+        content: MARK + "-output" }] } }),
+    JSON.stringify({ type: "attachment", sessionId: "s", uuid: "u4", timestamp: at(10),
+      attachment: { type: "file", content: MARK + "-attached" } }),
+    JSON.stringify({ type: "assistant", sessionId: "s", uuid: "u5", timestamp: at(12),
+      message: { role: "assistant", id: "m2", model: "claude-opus-5",
+        usage: { input_tokens: 20, output_tokens: 40, cache_read_input_tokens: 90000, cache_creation_input_tokens: 0 },
+        content: [{ type: "tool_use", id: "t2", name: "Agent", input: { prompt: MARK + "-delegated" } }] } }),
+    JSON.stringify({ type: "user", sessionId: "s", uuid: "u6", timestamp: at(40),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: MARK + "-summary" }] } }),
+  ];
+  const tape = loadJsonlString(lines.join("\n"), "marked");
+  const st = sessionStats(
+    { project: "-a-project", session: "0000-1111", bytes: 1234, mtime: 5678 },
+    tape.meta, tape.steps, tape.entries, pairTools(tape.steps),
+  );
+
+  const wire = JSON.stringify(st);
+  ok(!wire.includes(MARK),
+    "no text from a transcript reaches the statistics record",
+    wire.includes(MARK) ? wire.slice(wire.indexOf(MARK) - 30, wire.indexOf(MARK) + 20) : "");
+  ok(tape.steps.some((x) => x.preview.includes(MARK)),
+    "…and the marker really was in the index it was built from");
+
+  // Every string in the record must be an identifier or a name from the
+  // writer's own vocabulary — never prose.
+  const strings = [];
+  const walk = (v, path) => {
+    if (typeof v === "string") { strings.push([path, v]); return; }
+    if (Array.isArray(v)) return v.forEach((x, i) => walk(x, path + "[" + i + "]"));
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, path + "." + k);
+  };
+  walk(st, "");
+  const allowed = /^(\.project|\.session|\.models\[\d+\]|\.versions\[\d+\]|\.tools\.[^.]+|\.toolErrors\.[^.]+)$/;
+  const stray = strings.filter(([path]) => !allowed.test(path));
+  ok(stray.length === 0, "every string in the record is an identifier or a tool, model or version name",
+    stray.map(([p]) => p).join(", "));
+  ok(strings.some(([p]) => p === ".project") && strings.some(([p]) => p === ".session"),
+    "a session is identified by its project directory and its id");
+  ok(st.tools.Bash === 1 && st.tools.Agent === 1, "tool counts are by name",
+    JSON.stringify(st.tools));
+  ok(st.toolErrors.Bash === 1, "…and so are their failures");
+  ok(st.delegations === 1, "a delegation is counted");
+  ok(st.peakCtx === 90020, "the peak context is carried", String(st.peakCtx));
+  ok(st.errors >= 1 && st.idleGaps === 0, "errors and gaps are counted");
+
+  ok(st.ctxProfile.length === 24, "the sparkline profile is a fixed width",
+    String(st.ctxProfile.length));
+  ok(st.ctxProfile.every((v) => typeof v === "number"), "…of numbers");
+  ok(st.ctxProfile[st.ctxProfile.length - 1] >= st.ctxProfile[0],
+    "…and it carries forward rather than dropping to zero");
+  ok(contextProfile([]).every((v) => v === 0), "an empty run profiles as flat");
+
+}
+
 // ---------------------------------------------------------------- rule sets
 
 section("rule sets");
@@ -1169,6 +1248,27 @@ ok(!helperCode.includes("0.0.0.0"), "the helper never binds to 0.0.0.0");
 ok(/realpath/i.test(helperCode), "the helper resolves symlinks before checking the path");
 ok(helperCode.includes("PROJECTS"), "the helper confines itself to the projects directory");
 ok(!/customTitle|aiTitle|lastPrompt/.test(helperCode), "the helper never reads a session title");
+
+// The screen built from these records must not grow a text column. The risk is
+// naming a field that carries prompt text — not the word "summary" in an import
+// path, or "title" on a tooltip.
+const ovSrc = read("app/overview.tsx");
+const ovCode = ovSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+ok(!/customTitle|aiTitle|lastPrompt|\.preview\b|\.description\b|firstMessage|firstSaid/i.test(ovCode),
+  "the overview never reads a field that carries prompt text");
+ok(!/\bstats\.(label|note)\b/.test(ovCode), "…nor a free-text label");
+ok(/aria-sort/.test(ovSrc), "…and its columns are sortable, accessibly");
+
+// The helper writes one file, and not among the transcripts.
+ok(/const CACHE_DIR = /.test(helperCode), "the helper has one cache location");
+ok(!/CACHE_DIR[^\n]*PROJECTS|join\(PROJECTS[^)]*cache/i.test(helperCode),
+  "…which is not inside ~/.claude/projects");
+const writes = [...helperCode.matchAll(/writeFile\(([^,]+),/g)].map((m) => m[1].trim());
+ok(writes.length === 1 && writes[0] === "CACHE_FILE",
+  "the helper writes exactly one file, and it is the cache", writes.join(", "));
+ok(/hit\.bytes === f\.st\.size && hit\.mtime === f\.st\.mtimeMs/.test(helperCode),
+  "the cache is keyed by the file's size and mtime together");
+
 
 // A subagent sidecar carries a `description` written from the prompt that
 // spawned it. It is prose about the user's work, in the same class as a session

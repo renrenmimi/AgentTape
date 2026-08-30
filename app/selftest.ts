@@ -686,17 +686,55 @@ export async function runSelfTest(): Promise<void> {
     globals.join(", "),
   );
 
+  // ---- the overview, if the helper is answering ---------------------------
+  {
+    const reachable = await fetch("http://127.0.0.1:4319/health")
+      .then((r) => r.ok)
+      .catch(() => false);
+
+    if (!reachable) {
+      ok(true, "overview check skipped — the local helper is not running");
+    } else {
+      const res = await fetch("http://127.0.0.1:4319/overview").then((r) => r.json());
+      const rows = res.sessions ?? [];
+      ok(Array.isArray(rows) && rows.length > 0, "the helper returns session statistics",
+        `${rows.length} sessions`);
+
+      // The property that matters: a statistics record holds no prose.
+      const allowed = new Set(["project", "session"]);
+      const stray: string[] = [];
+      for (const r of rows) {
+        for (const [k, v] of Object.entries(r)) {
+          if (typeof v === "string" && !allowed.has(k)) stray.push(k);
+          if (Array.isArray(v) && v.some((x) => typeof x === "string") &&
+              k !== "models" && k !== "versions") stray.push(k);
+        }
+      }
+      ok(stray.length === 0,
+        "no session record carries a string but its identifiers and its vocabulary",
+        [...new Set(stray)].join(", "));
+      ok(rows.every((r: { ctxProfile?: number[] }) => Array.isArray(r.ctxProfile)),
+        "every session carries a context profile for its sparkline");
+      ok(rows.every((r: { steps?: number }) => typeof r.steps === "number"),
+        "…and the counts the table sorts by");
+    }
+  }
+
   // ---- virtualisation on a large tape -------------------------------------
   // Every call below goes through api() rather than the captured reference:
   // the object on window is rebuilt each render, and the old closures still
   // point at the previous tape.
   const BIG = 6000;
   api().loadTapeFile(syntheticTape(BIG));
-  await settle(6);
+  // Wait for the render rather than assuming a fixed number of frames: the
+  // blocks before this one do network work, and a fixed wait made this flaky.
+  for (let i = 0; i < 60 && api().view?.steps.length !== BIG; i++) await settle(1);
+  await settle(2);
   const big = api().view;
   ok(!!big && big.steps.length === BIG, "the synthetic tape loaded", `${big?.steps.length ?? 0} steps`);
   api().setPos(BIG - 1);
-  await settle(6);
+  for (let i = 0; i < 60 && api().pos !== BIG - 1; i++) await settle(1);
+  await settle(2);
   const list = document.querySelector(".vlist");
   const rendered = list?.querySelectorAll(".entry").length ?? 0;
   const expected = Number(list?.getAttribute("data-count") ?? 0);

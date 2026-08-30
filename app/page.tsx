@@ -25,7 +25,7 @@ import {
 import type { Tape } from "@/lib/format";
 import { KIND_LABEL, KindGlyph, FailGlyph, DelegateGlyph } from "./glyphs";
 import EmptyState from "./empty-state";
-import { fileUrl, subagentUrl, type HelperAgent, type HelperSession } from "./helper";
+import { fileUrl, subagentUrl, type HelperAgent, type HelperSession, type SessionStats } from "./helper";
 import SummaryStrip from "./summary-strip";
 import Timeline from "./timeline";
 import ContextChart from "./context-chart";
@@ -34,6 +34,7 @@ import StepDetail from "./step-detail";
 import Compare from "./compare";
 import Assertions from "./assertions";
 import Shortcuts from "./shortcuts";
+import Overview from "./overview";
 import FilterBar from "./filter-bar";
 import { runSelfTest } from "./selftest";
 
@@ -55,6 +56,7 @@ export default function Page() {
   const [asserting, setAsserting] = useState(false);
   const [rules, setRules] = useState<Rule[]>(DEFAULT_RULES);
   const [keysOpen, setKeysOpen] = useState(false);
+  const [overview, setOverview] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; lines: number; label: string } | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -562,7 +564,20 @@ export default function Page() {
   if (!tape || !view || !summary) {
     return (
       <main className="tape">
+        {overview && (
+          <Overview
+            onClose={() => setOverview(false)}
+            onOpen={(s) => {
+              setOverview(false);
+              void onHelperPick({
+                project: s.project, session: s.session, bytes: s.bytes, lines: s.lines,
+                tools: s.toolCalls, mtime: s.mtime, agents: s.agents ?? [],
+              });
+            }}
+          />
+        )}
         <EmptyState
+          onOverview={() => setOverview(true)}
           onFiles={onFiles}
           onHelperPick={onHelperPick}
           onDemo={onDemo}
