@@ -4,6 +4,7 @@
 //   npm run build && npx next start -p 3000 &
 //   node scripts/selftest.mjs                     # http://127.0.0.1:3000/?selftest=1
 //   node scripts/selftest.mjs http://127.0.0.1:3111/
+//   node scripts/selftest.mjs --helper            # …with the local helper too
 //
 // No dependencies, and deliberately none. Node 22 has a built-in `WebSocket`
 // and Chrome speaks the DevTools Protocol over it, so the whole driver is this
@@ -24,9 +25,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const URL_ARG = process.argv.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:3000/";
-const TARGET = URL_ARG.includes("selftest=")
-  ? URL_ARG
-  : URL_ARG + (URL_ARG.includes("?") ? "&" : "?") + "selftest=1";
+
+/**
+ * Which mode to run in, decided here rather than by what happens to be running
+ * on the machine.
+ *
+ * The overview block needs the local helper. It used to probe for one and adapt,
+ * so the suite behaved differently depending on the box — four assertions
+ * answered here, four skipped there. A gate cannot be built on that, and next
+ * round this becomes a gate on a runner where the helper will never be up.
+ *
+ * Default is `no-helper`: the page is told not to exercise that path, and the
+ * four assertions come back marked skipped whether or not a helper is running.
+ * `--helper` asks for the other mode, and is refused up front if nothing
+ * answers — asking for a mode and silently not getting it is the failure this
+ * whole item exists to remove.
+ */
+const HELPER = process.argv.includes("--helper");
+const HELPER_URL = "http://127.0.0.1:4319/health";
+
+const q = (u, k) => u + (u.includes("?") ? "&" : "?") + k;
+let TARGET = URL_ARG.includes("selftest=") ? URL_ARG : q(URL_ARG, "selftest=1");
+if (HELPER && !TARGET.includes("helper=")) TARGET = q(TARGET, "helper=1");
 const TIMEOUT_MS = Number(process.env.SELFTEST_TIMEOUT ?? 120_000);
 
 // ---------------------------------------------------------------- finding chrome
@@ -103,7 +123,7 @@ function paste(res, url) {
   const bad = res.results.filter((r) => !r.ok && !r.skipped);
   const out = [];
   out.push(`**AgentTape in-page suite** — ${bad.length} of ${res.total} assertions failed ` +
-    `(${res.pass} passed, ${res.skipped} not run here).`);
+    `(${res.pass} passed, ${res.skipped} not run here), in ${res.mode} mode.`);
   if (res.total !== res.expected) {
     out.push("");
     out.push(`The suite declares ${res.expected} assertions and ran ${res.total}. ` +
@@ -114,7 +134,8 @@ function paste(res, url) {
   out.push("| --- | --- |");
   for (const r of bad) out.push(`| ${r.label} | ${r.note ? r.note : "—"} |`);
   out.push("");
-  out.push(`Reproduce: \`npx next start -p 3000 & node scripts/selftest.mjs ${url}\``);
+  out.push(`Reproduce: \`npx next start -p 3000 & node scripts/selftest.mjs ${url}` +
+    `${HELPER ? " --helper" : ""}\``);
   return out.join("\n");
 }
 
@@ -133,6 +154,17 @@ try {
     "  Start it first:  npm run build && npx next start -p 3000\n",
   );
   process.exit(2);
+}
+
+if (HELPER) {
+  const up = await fetch(HELPER_URL).then((r) => r.ok).catch(() => false);
+  if (!up) {
+    console.error(
+      "\n  --helper was asked for and nothing is answering on 127.0.0.1:4319.\n" +
+      "  Start it first:  npm run helper\n",
+    );
+    process.exit(2);
+  }
 }
 
 const chrome = await findChrome();
@@ -231,8 +263,9 @@ try {
     code = 2;
   } else {
     const bad = res.results.filter((r) => !r.ok && !r.skipped);
-    console.log(`\n  ${res.pass}/${res.total} passed · ${bad.length} failed · ` +
-      `${res.skipped} not run here · ${res.expected} declared\n`);
+    console.log(`\n  [${res.mode}] ${res.pass}/${res.total} passed · ${bad.length} failed · ` +
+      `${res.skipped} not run here · ${res.expected} declared, ` +
+      `${res.expectedSkips} skips declared\n`);
     for (const r of bad) console.log(`  FAIL  ${r.label}${r.note ? "   [" + r.note + "]" : ""}`);
 
     // The protocol saw these too. The suite has its own trap for them and
@@ -242,7 +275,17 @@ try {
     for (const l of [...new Set(logged)]) console.log(`  LOG   ${l}`);
 
     const short = res.total !== res.expected;
-    if (bad.length || short || threw.length) {
+    const wrongSkips = res.skipped !== res.expectedSkips;
+    const wrongMode = res.mode !== (HELPER ? "helper" : "no-helper");
+    if (wrongMode) {
+      console.log(`  FAIL  the page ran in ${res.mode} and the driver asked for ` +
+        `${HELPER ? "helper" : "no-helper"}`);
+    }
+    if (wrongSkips) {
+      console.log(`  FAIL  ${res.skipped} assertions were skipped and ` +
+        `${res.mode} declares ${res.expectedSkips}`);
+    }
+    if (bad.length || short || wrongSkips || wrongMode || threw.length) {
       console.log("\n  ── copy from here " + "─".repeat(52));
       console.log(paste(res, TARGET));
       console.log("  ── to here " + "─".repeat(59) + "\n");
