@@ -10,6 +10,7 @@
 // flag is present.
 
 import { TAPE_FORMAT, type TapeFile, type TapeStep } from "@/lib/tape";
+import { ctx2d } from "./canvas";
 
 type Filterish = { tools: string[]; minChars: number; query: string };
 
@@ -79,7 +80,9 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const spacing = (canvas.width / dpr - 16) / n;
   if (spacing < 6) return { usable: false, groups: 0, why: `spacing ${spacing.toFixed(2)}px` };
-  const g = canvas.getContext("2d", { willReadFrequently: true });
+  // The canvas was created with willReadFrequently because the flag is set;
+  // options passed here would be ignored, so this just takes the context.
+  const g = ctx2d(canvas);
   const band = g?.getImageData(0, Math.round(12 * dpr), canvas.width, Math.round(20 * dpr));
   let groups = 0;
   let inRun = false;

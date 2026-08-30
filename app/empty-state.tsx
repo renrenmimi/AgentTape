@@ -20,6 +20,31 @@ export type HelperSession = {
 
 const HELPER = "http://127.0.0.1:4319";
 
+// Probing a port nothing is listening on logs net::ERR_CONNECTION_REFUSED in
+// red, at the network layer, before any JavaScript sees it — a .catch() cannot
+// suppress it. A working page that prints a red error looks broken, so the
+// probe only runs unasked once the helper has answered at least once on this
+// machine. Until then it is a button, which is also a better way to find out
+// the helper exists than a line of text that only appears when it does not.
+const SEEN_KEY = "agenttape-helper-seen";
+
+function helperSeenBefore(): boolean {
+  try {
+    return window.localStorage.getItem(SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberHelper(seen: boolean): void {
+  try {
+    if (seen) window.localStorage.setItem(SEEN_KEY, "1");
+    else window.localStorage.removeItem(SEEN_KEY);
+  } catch {
+    /* private mode: the probe just stays manual */
+  }
+}
+
 type Props = {
   onFile: (file: File) => void;
   onHelperPick: (url: string, label: string) => void;
@@ -37,6 +62,8 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
   const [over, setOver] = useState(false);
   const [sessions, setSessions] = useState<HelperSession[] | null>(null);
   const [helperErr, setHelperErr] = useState("");
+  const [probing, setProbing] = useState(false);
+  const [asked, setAsked] = useState(false);
   // Whether the helper block belongs on the page depends on `location`, which
   // the server does not have. Deciding after mount keeps the first client
   // render identical to the server's.
@@ -45,17 +72,35 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
 
   useEffect(() => { setMounted(true); }, []);
 
-  useEffect(() => {
-    if (!isLocal()) return;
+  const probe = useCallback(() => {
+    if (!isLocal()) return () => {};
+    setProbing(true);
+    setAsked(true);
+    setHelperErr("");
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 1500);
+    const timer = window.setTimeout(() => ac.abort(), 1500);
     fetch(HELPER + "/sessions", { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j) => setSessions(Array.isArray(j.sessions) ? j.sessions : []))
-      .catch(() => setHelperErr("not running"))
-      .finally(() => clearTimeout(timer));
-    return () => { ac.abort(); clearTimeout(timer); };
+      .then((j) => {
+        setSessions(Array.isArray(j.sessions) ? j.sessions : []);
+        rememberHelper(true);
+      })
+      .catch(() => {
+        setHelperErr("not running");
+        rememberHelper(false);
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        setProbing(false);
+      });
+    return () => { ac.abort(); window.clearTimeout(timer); };
   }, []);
+
+  // Unasked only when the helper has answered here before.
+  useEffect(() => {
+    if (!isLocal() || !helperSeenBefore()) return;
+    return probe();
+  }, [probe]);
 
   const take = useCallback(
     (files: FileList | null) => {
@@ -116,12 +161,22 @@ export default function EmptyState({ onFile, onHelperPick, onDemo, progress, err
 
         {mounted && isLocal() && (
           <div className="sessions">
-            <span className="eyebrow" style={{ marginBottom: 4 }}>
-              {sessions === null && !helperErr && "Looking for the local helper…"}
-              {helperErr && "Local helper not running — run npm run helper to list your sessions"}
-              {sessions && sessions.length > 0 && `Recent sessions · ${sessions.length}`}
-              {sessions && sessions.length === 0 && "Helper found no sessions"}
-            </span>
+            <div className="helper-row">
+              <span className="eyebrow">
+                {probing && "Looking for the local helper…"}
+                {!probing && sessions === null && !helperErr &&
+                  "Local helper — lists your sessions so you do not have to hunt for the file"}
+                {!probing && helperErr &&
+                  "Local helper not running — start it with npm run helper, then look again"}
+                {!probing && sessions && sessions.length > 0 && `Recent sessions · ${sessions.length}`}
+                {!probing && sessions && sessions.length === 0 && "The helper is running but found no sessions"}
+              </span>
+              {!probing && (sessions === null || helperErr) && (
+                <button type="button" className="btn btn-sm" onClick={() => probe()}>
+                  {asked ? "Look again" : "Look for it"}
+                </button>
+              )}
+            </div>
             {sessions?.map((s) => (
               <button
                 type="button"

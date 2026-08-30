@@ -963,6 +963,16 @@ pre.body.tall { max-height: 520px; }
 
 .sessions { margin-top: 16px; display: grid; gap: 4px; }
 
+.helper-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  min-height: 24px;
+}
+
+.helper-row .eyebrow { min-width: 0; }
+
 .session-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
