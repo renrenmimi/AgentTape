@@ -26,7 +26,7 @@ export const DELEGATION_TOOLS = new Set(["Agent"]);
 export const isDelegation = (s: Step): boolean =>
   s.kind === "tool-call" && DELEGATION_TOOLS.has(s.tool);
 
-/** `agent-a2cc28d63813de803.jsonl` → `a2cc28d63813de803`. */
+/** `agent-0123456789012345.jsonl` → `0123456789012345`. */
 export function agentIdFromName(name: string): string {
   const m = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name.replace(/^.*\//, ""));
   return m ? m[1] : "";
