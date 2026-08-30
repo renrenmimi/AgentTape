@@ -10,6 +10,7 @@
 // place, that the app has no remote endpoint, and that nothing lands on
 // `window` outside the self-test flag.
 
+import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -36,8 +37,25 @@ import {
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
+/**
+ * Which lines of this file actually ran an assertion.
+ *
+ * A check that never executes is worse than a missing one: it is counted, it
+ * is green, and it is evidence of nothing. This file has already shipped one —
+ * a whole block appended after `process.exit`, which nothing revealed except
+ * that the total did not move. So every call site is recorded as it fires and
+ * the set is compared with the call sites in the source at the end.
+ */
+const fired = new Set();
+const callerLine = () => {
+  const at = (new Error().stack ?? "").split("\n")[3] ?? "";
+  const m = at.match(/verify\.mjs:(\d+):/);
+  return m ? Number(m[1]) : 0;
+};
+
 const ok = (cond, label, note) => {
   checked++;
+  fired.add(callerLine());
   if (!cond) { failed++; console.log("  FAIL  " + label + (note ? "   [" + note + "]" : "")); }
 };
 const section = (s) => console.log("\n" + s);
@@ -1527,19 +1545,39 @@ ok(!/meta\.description|\.description\b/.test(appSrc),
 // Nothing in this repository writes an out/ directory — `next build` writes
 // .next — so following the instruction failed. Every directory the helper
 // resolves or advertises must be one that exists or that a script produces.
+//
+// The two checks that came out of that bug were written against the exact
+// shapes it wore: `new URL("../out")` and the literal "./out". Removing the
+// static serving in round three removed both shapes, so both checks have
+// matched nothing since and ran zero times for three rounds while counting as
+// coverage. They now read what the helper actually does, and each extraction
+// is asserted non-empty first, so neither can go quietly vacuous a second time.
 const PRODUCED_BY_A_SCRIPT = new Set([".next"]); // what `next build` writes
-const helperResolves = [...helperCode.matchAll(/new URL\(\s*["']\.\.\/([^"'/]+)/g)].map((m) => m[1]);
-for (const dir of helperResolves) {
-  ok(existsSync(join(root, dir)) || PRODUCED_BY_A_SCRIPT.has(dir),
+// `application/json`, `text/plain`: a content-type is not a directory.
+const MIME_TOP = new Set(["application", "text", "image", "audio", "video", "multipart"]);
+const producible = (d) => existsSync(join(root, d)) || PRODUCED_BY_A_SCRIPT.has(d);
+
+// What it resolves: the modules it reaches for outside its own directory.
+const helperResolves = [...helperCode.matchAll(/import\(\s*["']\.\.\/([^"'/]+)\//g)]
+  .map((m) => m[1]);
+ok(helperResolves.length > 0,
+  "the helper resolves something, so this check has something to check",
+  helperResolves.join(", "));
+for (const dir of new Set(helperResolves)) {
+  ok(producible(dir),
     "the helper only resolves a directory this repository can produce: " + dir);
 }
+
 // Same rule for what it tells the user, which is where the original bug lived.
-const advertised = [...helper.matchAll(/(?:^|[\s"'`(])\.\/([a-z][a-z0-9_-]*)\/?(?=[\s"'`.,)]|$)/gm)]
+const advertised = [...helper.matchAll(/(?:^|[\s"'`(])([a-z][a-z0-9_-]*)\/(?=[a-z])/gm)]
   .map((m) => m[1])
-  .filter((d) => d !== "bin");
+  .filter((d) => !MIME_TOP.has(d));
+ok(advertised.length > 0,
+  "the helper advertises a path at somebody, so this check has something to check",
+  [...new Set(advertised)].join(", "));
 for (const dir of new Set(advertised)) {
-  ok(existsSync(join(root, dir)) || PRODUCED_BY_A_SCRIPT.has(dir),
-    "the helper never advertises a directory this repository cannot produce: ./" + dir);
+  ok(producible(dir),
+    "the helper never advertises a directory this repository cannot produce: " + dir);
 }
 ok(!/serveStatic|APP_ROOT/.test(helperCode),
   "the helper has one path-resolution surface, not two");
@@ -1730,6 +1768,86 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     "…that says what the tool does in its first sentence");
   ok(/(so you can|instead of|shows you)/i.test(opening),
     "…and what it is for, rather than only what it is");
+}
+
+// ---------------------------------------------------------------- the in-page suite is a fixed set
+//
+// A score is only evidence if the set behind it did not move. Round five
+// compared 141/159 with 139/161 and concluded the change had made things
+// worse; the denominator had moved, so the two numbers were about different
+// sets. The suite now declares its size and fails when the actual count
+// differs, which also catches the failure this file has already had — a block
+// that never ran.
+
+{
+  const st = read("app/selftest.ts");
+  const declared = st.match(/const DECLARED_ASSERTIONS = (\d+);/);
+  ok(!!declared, "the in-page suite declares how many assertions it runs");
+  ok(Number(declared?.[1]) > 100, "…and the number is the real one, not a placeholder",
+    declared?.[1] ?? "missing");
+  ok(/results\.length \+ 1 === DECLARED_ASSERTIONS/.test(st),
+    "…and compares it against what actually ran");
+  ok(/expected: DECLARED_ASSERTIONS/.test(st),
+    "…and hands it to a driver, so CI can fail on a short run too");
+
+  // One exit. The bail-out for "no tape loaded" used to report by itself and
+  // return, which reported twice and walked past the count check on the way.
+  const stLines = st.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l));
+  const exits = stLines.filter(
+    (l) => /(?:^|[^\w.$])report\(/.test(l) && !/function report\(/.test(l),
+  ).length;
+  ok(exits === 2, "the suite reports from one place, plus the no-api bail-out",
+    `${exits} calls to report`);
+
+  // `ok(true, "…skipped…")` is a vacuous pass, which this project's own rule
+  // checker refuses to call a pass. Skipped work says so in its own word.
+  ok(!stLines.some((l) => /\bok\(\s*true\s*,/.test(l)),
+    "no assertion in the suite is a literal pass");
+  ok(/const skip = \(/.test(st) && /skipped: true/.test(st),
+    "…because there is a way to say an assertion did not run here");
+
+  // Both branches of the helper block must emit the same number of results, or
+  // the frozen total depends on whether a helper happens to be running — 160 on
+  // a machine without one, 163 with. Asserted through the shared label list.
+  ok(/for \(const label of L\) skip\(label, why\)/.test(st),
+    "the helper-dependent block emits one label list either way");
+}
+
+// ---------------------------------------------------------------- did every check run
+//
+// The audit the block above exists for. Every `ok(` in this file is a call site
+// that was written to run; the ones that did not are either dead code or a
+// check somebody believes is protecting them and is not. Reported by line, so
+// the answer is a place in the file rather than a number.
+
+{
+  const src = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
+  const MARK = "did every check run";
+  const self = src.findIndex((l) => l.includes("// ---") && l.includes(MARK)) + 1;
+  const sites = [];
+  for (let i = 0; i < src.length; i++) {
+    const line = src[i];
+    // A comment that talks about assertions is not an assertion. Two of this
+    // file's own comments say `ok(` and were reported as dead code by the first
+    // version of this audit, which is the audit failing rather than the file.
+    if (/^\s*(\/\/|\*)/.test(line)) continue;
+    // A call, not a property access and not a longer name.
+    if (!/(?:^|[^\w.$])ok\(/.test(line) || /const ok\s*=/.test(line)) continue;
+    sites.push(i + 1);
+  }
+  // The audit cannot watch itself fire: its own assertions run after the set of
+  // dead lines has been computed. So they are excluded by position and their
+  // number is pinned instead, which is the same trick under a different name —
+  // if somebody moves an assertion below this marker to hide it, the count moves.
+  const mine = sites.filter((n) => n > self);
+  const dead = sites.filter((n) => n <= self && !fired.has(n));
+  ok(self > 0 && sites.length > 20,
+    "the reachability audit can see this file's own call sites",
+    `${sites.length} call sites, marker at line ${self}`);
+  ok(mine.length === 3, "…and only its own three assertions sit below the marker",
+    `${mine.length} below line ${self}`);
+  ok(dead.length === 0, "every assertion in verify.mjs actually ran",
+    dead.length ? `never ran: line ${dead.join(", line ")}` : "");
 }
 
 console.log(`\n${checked - failed}/${checked} checks passed`);

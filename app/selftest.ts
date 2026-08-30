@@ -133,10 +133,44 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
   return { usable: true, groups, why: "" };
 }
 
+/**
+ * How many assertions this suite runs, counting this declaration's own.
+ *
+ * The set is frozen so that a score can be compared with another score. Round
+ * five compared 141/159 with 139/161 and drew a conclusion from it; the
+ * denominator had moved, so the two numbers were about different sets and the
+ * comparison meant nothing. A suite whose size can drift underneath a
+ * measurement is not a measurement.
+ *
+ * It also catches the failure that has already happened once in the other
+ * harness: a block that never runs. If a block throws, or sits behind a
+ * condition nothing takes, the count comes up short and this fails by name
+ * rather than by the total quietly being a different number nobody checked.
+ *
+ * Changing the suite means changing this line, deliberately, in the same
+ * commit.
+ */
+const DECLARED_ASSERTIONS = 163;
+
 export async function runSelfTest(): Promise<void> {
-  const results: { ok: boolean; label: string; note?: string }[] = [];
+  const results: { ok: boolean; label: string; note?: string; skipped?: boolean }[] = [];
   const ok = (cond: boolean, label: string, note?: string) => {
     results.push({ ok: !!cond, label, note });
+  };
+  /**
+   * An assertion that could not run here, kept in the count and not counted as
+   * a pass.
+   *
+   * The overview block used to answer "the helper is not running" with
+   * `ok(true, "…skipped…")`, which is a vacuous pass — the exact thing this
+   * project's own rule checker refuses to call a pass. Worse, that branch
+   * emitted one result where the other emitted four, so the suite's total
+   * depended on whether a helper happened to be running: 160 here, 163 on a
+   * machine with one, and neither number comparable with the other. A frozen
+   * count and an environment-dependent total cannot both be true.
+   */
+  const skip = (label: string, why: string) => {
+    results.push({ ok: false, skipped: true, label, note: why });
   };
 
   const a = api();
@@ -145,6 +179,29 @@ export async function runSelfTest(): Promise<void> {
     return;
   }
 
+  try {
+    await runBlocks(a, ok, skip);
+  } catch (e) {
+    // A throw used to end the run with no report at all: `runSelfTest` is
+    // called as `void runSelfTest()`, so the rejection went nowhere and
+    // `window.__selftest` was simply never set. A driver waiting for it waits
+    // forever, which reads as a hang rather than as a failure.
+    ok(false, "the suite ran to the end without throwing",
+      e instanceof Error ? e.message : String(e));
+  }
+
+  ok(results.length + 1 === DECLARED_ASSERTIONS,
+    "the suite ran every assertion it declares",
+    `${results.length + 1} ran, ${DECLARED_ASSERTIONS} declared`);
+  report(results);
+}
+
+async function runBlocks(
+  a: Api,
+  ok: (cond: boolean, label: string, note?: string) => void,
+  skip: (label: string, why: string) => void,
+): Promise<void> {
+
   // ---- load the demo ------------------------------------------------------
   if (!a.tape) {
     await a.onDemo();
@@ -152,7 +209,11 @@ export async function runSelfTest(): Promise<void> {
   }
   const view = api().view;
   ok(!!view && view.steps.length > 0, "a tape is loaded", `${view?.steps.length ?? 0} steps`);
-  if (!view) { report(results); return; }
+  // Bailing out here used to call `report` itself and return, which reported
+  // twice and skipped the declared-count check on the way past — the one path
+  // where a short run would not have been noticed as a short run. Throwing
+  // sends it through the single exit instead.
+  if (!view) throw new Error("no tape loaded; the rest of the suite has nothing to run against");
 
   const n = view.steps.length;
 
@@ -173,7 +234,8 @@ export async function runSelfTest(): Promise<void> {
     ok(painted.groups === n, "the canvas painted one tick per step",
       `painted ${painted.groups}, expected ${n}`);
   } else {
-    ok(true, "tick count check skipped — ticks overlap at this width", painted.why);
+    // Same label either way, so the count does not move with the window width.
+    skip("the canvas painted one tick per step", painted.why);
   }
 
   // ---- keyboard ----------------------------------------------------------
@@ -852,13 +914,22 @@ export async function runSelfTest(): Promise<void> {
       .then((r) => r.ok)
       .catch(() => false);
 
+    // Four labels either way. Whether the helper is running changes whether
+    // they are answered, never how many there are.
+    const L = [
+      "the helper returns session statistics",
+      "no session record carries a string but its identifiers and its vocabulary",
+      "every session carries a context profile for its sparkline",
+      "…and the counts the table sorts by",
+    ] as const;
+
     if (!reachable) {
-      ok(true, "overview check skipped — the local helper is not running");
+      const why = "the local helper is not running on 127.0.0.1:4319";
+      for (const label of L) skip(label, why);
     } else {
       const res = await fetch("http://127.0.0.1:4319/overview").then((r) => r.json());
       const rows = res.sessions ?? [];
-      ok(Array.isArray(rows) && rows.length > 0, "the helper returns session statistics",
-        `${rows.length} sessions`);
+      ok(Array.isArray(rows) && rows.length > 0, L[0], `${rows.length} sessions`);
 
       // The property that matters: a statistics record holds no prose.
       const allowed = new Set(["project", "session"]);
@@ -870,13 +941,9 @@ export async function runSelfTest(): Promise<void> {
               k !== "models" && k !== "versions") stray.push(k);
         }
       }
-      ok(stray.length === 0,
-        "no session record carries a string but its identifiers and its vocabulary",
-        [...new Set(stray)].join(", "));
-      ok(rows.every((r: { ctxProfile?: number[] }) => Array.isArray(r.ctxProfile)),
-        "every session carries a context profile for its sparkline");
-      ok(rows.every((r: { steps?: number }) => typeof r.steps === "number"),
-        "…and the counts the table sorts by");
+      ok(stray.length === 0, L[1], [...new Set(stray)].join(", "));
+      ok(rows.every((r: { ctxProfile?: number[] }) => Array.isArray(r.ctxProfile)), L[2]);
+      ok(rows.every((r: { steps?: number }) => typeof r.steps === "number"), L[3]);
     }
   }
 
@@ -903,17 +970,25 @@ export async function runSelfTest(): Promise<void> {
     `${rendered} rows in the DOM for ${expected} entries`);
   const nodes = document.querySelectorAll(".pane-body *").length;
   ok(nodes < 3000, "the DOM node count stays bounded", `${nodes} nodes`);
-
-  report(results);
 }
 
-function report(results: { ok: boolean; label: string; note?: string }[]): void {
+function report(results: { ok: boolean; label: string; note?: string; skipped?: boolean }[]): void {
   const pass = results.filter((r) => r.ok).length;
+  const skipped = results.filter((r) => r.skipped).length;
+  const fail = results.length - pass - skipped;
   const lines = results.map((r) =>
-    (r.ok ? "  ok   " : "  FAIL ") + r.label + (r.note ? "  [" + r.note + "]" : ""),
+    (r.skipped ? "  --   " : r.ok ? "  ok   " : "  FAIL ") + r.label +
+    (r.note ? "  [" + r.note + "]" : ""),
   );
-  const text = `AgentTape self-test — ${pass}/${results.length} passed\n\n` + lines.join("\n");
-  (window as unknown as Record<string, unknown>).__selftest = { pass, total: results.length, results };
+  // Skipped sits in the denominator and outside the pass count, the same way
+  // a vacuous rule does in `agenttape check`. "Nothing violated this" and
+  // "this was never tested" are different facts and are reported as two.
+  const head = `AgentTape self-test — ${pass}/${results.length} passed, ` +
+    `${fail} failed, ${skipped} not run here`;
+  const text = head + "\n\n" + lines.join("\n");
+  (window as unknown as Record<string, unknown>).__selftest = {
+    pass, fail, skipped, total: results.length, expected: DECLARED_ASSERTIONS, results,
+  };
   document.title = `selftest ${pass}/${results.length}`;
   const pre = document.createElement("pre");
   pre.className = "selftest-report";
