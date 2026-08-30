@@ -142,6 +142,88 @@ export function summarise(tape: Tape): Summary {
   };
 }
 
+/**
+ * What happened to the payload after the biggest single-step jump.
+ *
+ * Marking the step is half an answer. The half that matters is that the
+ * payload is still in the array, so every turn since has paid to re-send it.
+ *
+ * There is a limit to what the index can prove. Context is one number per
+ * turn, not a list of what is in the array, so this cannot say "that specific
+ * payload is still there" — only that the context has not fallen back below
+ * the level the jump put it at. That is a strong signal and a weak proof, and
+ * the UI says which it is rather than dressing the inference up as a fact.
+ */
+export type JumpTrace = {
+  at: number;
+  by: number;
+  /** Context immediately after the jump. */
+  level: number;
+  /** First later step whose context fell meaningfully below that level, or -1. */
+  fellAt: number;
+  /** True when that fall is a recorded compaction rather than an inference. */
+  fellToCompaction: boolean;
+  /** Steps from the jump to the fall, or to the end of the run. */
+  stepsSince: number;
+  /** Model turns that re-sent the context over that span. */
+  turnsSince: number;
+  /** What re-sending has cost: turnsSince × by. */
+  resent: number;
+  /** True when there is not enough context data to say anything at all. */
+  unknown: boolean;
+};
+
+/**
+ * Cache accounting wobbles by a few hundred tokens between turns, so a fall has
+ * to be more than noise before it counts as the payload leaving.
+ */
+const FELL_BELOW = 0.98;
+
+export function traceJump(steps: Step[], at: number, by: number): JumpTrace | null {
+  if (by <= 0 || at <= 0 || at >= steps.length) return null;
+  const level = steps[at].ctx;
+  if (!level) return { at, by, level, fellAt: -1, fellToCompaction: false,
+    stepsSince: 0, turnsSince: 0, resent: 0, unknown: true };
+
+  let fellAt = -1;
+  let fellToCompaction = false;
+  let turnsSince = 0;
+  let sawContext = false;
+
+  for (let i = at + 1; i < steps.length; i++) {
+    const s = steps[i];
+    if (s.usage) turnsSince++;
+    if (!s.ctx) continue;
+    sawContext = true;
+    if (s.ctx < level * FELL_BELOW) {
+      fellAt = i;
+      // A compaction is the writer telling us the array was cut down. Anything
+      // else is a drop we noticed but cannot explain, and is reported that way.
+      for (let k = at + 1; k <= i; k++) if (steps[k].compact) fellToCompaction = true;
+      break;
+    }
+  }
+
+  if (fellAt >= 0) {
+    let turns = 0;
+    for (let i = at + 1; i < fellAt; i++) if (steps[i].usage) turns++;
+    turnsSince = turns;
+  }
+
+  const end = fellAt >= 0 ? fellAt : steps.length;
+  return {
+    at,
+    by,
+    level,
+    fellAt,
+    fellToCompaction,
+    stepsSince: end - at - 1,
+    turnsSince,
+    resent: turnsSince * by,
+    unknown: !sawContext,
+  };
+}
+
 // ------------------------------------------------------------ formatting
 
 export function fmtInt(n: number): string {

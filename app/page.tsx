@@ -12,7 +12,7 @@ import { pairTools } from "@/lib/parser";
 import { loadJsonlBlob } from "@/lib/load";
 import { tapeFromFile, serializeTape, type TapeFile } from "@/lib/tape";
 import { redactTape } from "@/lib/redact";
-import { fmtInt, summarise } from "@/lib/summary";
+import { fmtInt, summarise, traceJump } from "@/lib/summary";
 import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek, type Filter } from "@/lib/filter";
 import type { Tape } from "@/lib/format";
 import { KIND_LABEL, KindGlyph, FailGlyph } from "./glyphs";
@@ -56,6 +56,14 @@ export default function Page() {
   const filterIndex = useMemo(
     () => (tape ? buildFilterIndex(tape.steps, pairs) : null),
     [tape, pairs],
+  );
+
+  // What became of the payload the biggest jump added. Derived from the index
+  // over the whole tape, not the filtered view, so hiding bookkeeping records
+  // cannot change the answer.
+  const jumpTrace = useMemo(
+    () => (tape && summary ? traceJump(tape.steps, summary.jumpAt, summary.jumpBy) : null),
+    [tape, summary],
   );
 
   const filtering = isActive(filter);
@@ -407,6 +415,8 @@ export default function Page() {
           jumpBy={summary.jumpBy}
           peakCtx={summary.peakCtx}
           compactAt={compactions}
+          trace={jumpTrace}
+          fellAtShown={jumpTrace && jumpTrace.fellAt >= 0 ? shownIndex(jumpTrace.fellAt) : 0}
           onPos={setPos}
         />
       </section>

@@ -18,7 +18,7 @@ import { createIndexer, pushLine, finishIndex, pairTools, bodyOf } from "./lib/p
 import { loadJsonlString } from "./lib/load.ts";
 import { redactTape, redactStep, auditRedacted, placeholder, scrubName } from "./lib/redact.ts";
 import { tapeFromFile, serializeTape, TAPE_FORMAT } from "./lib/tape.ts";
-import { summarise } from "./lib/summary.ts";
+import { summarise, traceJump } from "./lib/summary.ts";
 import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek } from "./lib/filter.ts";
 import { cumulativeChars, deltaAt } from "./lib/delta.ts";
 
@@ -135,6 +135,16 @@ function makeLines() {
     subtype: "compact_boundary", level: "info", content: BODIES[2],
     compactMetadata: { preTokens: 90700, postTokens: 12000, cumulativeDroppedTokens: 78700,
       durationMs: 4100, trigger: "auto", preservedMessages: { uuids: [], allUuids: [], anchorUuid: "" } },
+  }));
+
+  // the turn after the compaction, carrying the reduced context. Without this
+  // the fixture never shows a payload leaving the array and the trace has
+  // nothing to find.
+  L.push(JSON.stringify({
+    type: "assistant", sessionId: "s1", uuid: "u11", parentUuid: "u10", timestamp: at(34),
+    message: { role: "assistant", id: "msg_01EfGhJkLmNpQrStUvWxYz67", model: "claude-opus-5",
+      usage: usage(400, 60, 11600, 0),
+      content: [{ type: "text", text: BODIES[1] }] },
   }));
 
   // malformed JSON, in the middle, exactly as a half-flushed write would look
@@ -433,6 +443,39 @@ section("filtering");
   ok(seek(mask, last, 1) === -1, "seek forward stops at the end rather than wrapping");
   ok(seek(mask, tape.steps.length, -1) === last, "seek back finds the last match");
   ok(seek(mask, first, -1) === -1, "seek back stops at the start");
+}
+
+// ---------------------------------------------------------------- jump trace
+
+section("context jump attribution");
+{
+  const t = traceJump(tape.steps, S.jumpAt, S.jumpBy);
+  ok(!!t, "the marked jump can be traced");
+  ok(t.by === S.jumpBy && t.at === S.jumpAt, "the trace describes the step the summary marked");
+  ok(t.level === tape.steps[S.jumpAt].ctx, "the level is the context immediately after the jump");
+  ok(t.resent === t.turnsSince * t.by, "the re-reading cost is turns times payload");
+  ok(t.stepsSince >= 0 && t.turnsSince >= 0, "the counts are not negative");
+
+  // The fixture compacts from 90,700 to 12,000, so the payload demonstrably
+  // leaves the array — and the writer says why, which is the difference
+  // between reporting a fact and guessing at one.
+  ok(t.fellAt > t.at, "the trace finds where the context fell back", String(t.fellAt));
+  ok(t.fellToCompaction === true, "and attributes it to the recorded compaction");
+
+  ok(traceJump(tape.steps, 0, 0) === null, "a tape with no jump has no trace");
+  ok(traceJump(tape.steps, 5, -1) === null, "a negative jump has no trace");
+
+  // A tape with no usage anywhere cannot be traced, and must say so rather
+  // than inventing a number.
+  const blind = loadJsonlString([
+    JSON.stringify({ type: "user", timestamp: "2026-02-02T08:00:00Z", uuid: "b1",
+      message: { role: "user", content: [{ type: "text", text: "no usage anywhere" }] } }),
+    JSON.stringify({ type: "user", timestamp: "2026-02-02T08:00:01Z", uuid: "b2",
+      message: { role: "user", content: [{ type: "text", text: "still none" }] } }),
+  ].join("\n"), "blind");
+  const bt = traceJump(blind.steps, 1, 100);
+  ok(bt !== null && bt.unknown === true, "a tape with no context figures reports that it cannot say");
+  ok(bt.stepsSince === 0 && bt.turnsSince === 0, "…and claims nothing");
 }
 
 // ---------------------------------------------------------------- step delta
