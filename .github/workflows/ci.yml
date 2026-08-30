@@ -42,6 +42,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node verify.mjs
+
+      # Two counters guard the assertions in this repository — one accumulated
+      # while a run happens, one taken statically over the source — and neither
+      # is sufficient alone. A check written and never called is invisible to
+      # the first; a check that runs twice round a loop is invisible to the
+      # second. This step breaks both on purpose, four ways, and requires each
+      # break to be caught by the counter that is supposed to catch it. It also
+      # requires an unmutated copy to come back clean, which is what stops the
+      # guard from reporting five successes while the checker is broken in some
+      # other way. No browser, so unlike the in-page suite it belongs here.
+      - run: npm run counters
+
       - run: npx next build
 
       # Dogfooding. The exit code of `agenttape check` is the whole feature —
