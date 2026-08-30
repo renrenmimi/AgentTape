@@ -11,15 +11,24 @@
 
 import { TAPE_FORMAT, type TapeFile, type TapeStep } from "@/lib/tape";
 
+type Filterish = { tools: string[]; minChars: number; query: string };
+
 type Api = {
   tape: unknown;
-  view: { steps: { i: number; err: boolean }[] } | null;
+  view: { steps: { i: number; err: boolean; tool: string }[] } | null;
   pos: number;
   setPos: (n: number) => void;
   onDemo: () => Promise<void>;
   loadTapeFile: (f: TapeFile) => void;
   setShowMeta: (b: boolean) => void;
+  filter: Filterish;
+  setFilter: (f: Filterish) => void;
+  matches: number;
+  mask: Uint8Array;
+  seekNext: (dir: 1 | -1) => void;
 };
+
+const NO_FILTER: Filterish = { tools: [], minChars: 0, query: "" };
 
 const frame = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 const settle = async (n = 3) => { for (let i = 0; i < n; i++) await frame(); };
@@ -59,6 +68,35 @@ function syntheticTape(steps: number): TapeFile {
   };
 }
 
+/**
+ * How many separate marks the tick rail actually has on screen. Used twice:
+ * once to check the timeline draws one per step, and again to check that
+ * filtering dims ticks rather than deleting them.
+ */
+function countPaintedTicks(n: number): { usable: boolean; groups: number; why: string } {
+  const canvas = document.querySelector<HTMLCanvasElement>(".track canvas");
+  if (!canvas) return { usable: false, groups: 0, why: "no canvas" };
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const spacing = (canvas.width / dpr - 16) / n;
+  if (spacing < 6) return { usable: false, groups: 0, why: `spacing ${spacing.toFixed(2)}px` };
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  const band = g?.getImageData(0, Math.round(12 * dpr), canvas.width, Math.round(20 * dpr));
+  let groups = 0;
+  let inRun = false;
+  if (band) {
+    const { width, height, data } = band;
+    for (let x = 0; x < width; x++) {
+      let hit = false;
+      for (let y = 0; y < height; y++) {
+        if (data[(y * width + x) * 4 + 3] > 12) { hit = true; break; }
+      }
+      if (hit && !inRun) groups++;
+      inRun = hit;
+    }
+  }
+  return { usable: true, groups, why: "" };
+}
+
 export async function runSelfTest(): Promise<void> {
   const results: { ok: boolean; label: string; note?: string }[] = [];
   const ok = (cond: boolean, label: string, note?: string) => {
@@ -94,30 +132,12 @@ export async function runSelfTest(): Promise<void> {
 
   // Count the ticks the canvas actually painted. Only meaningful while the
   // shapes are far enough apart not to merge, so it is gated on spacing.
-  const canvas = document.querySelector<HTMLCanvasElement>(".track canvas");
-  if (canvas) {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const spacing = (canvas.width / dpr - 16) / n;
-    if (spacing >= 6) {
-      const g = canvas.getContext("2d", { willReadFrequently: true });
-      const band = g?.getImageData(0, Math.round(12 * dpr), canvas.width, Math.round(20 * dpr));
-      let groups = 0;
-      let inRun = false;
-      if (band) {
-        const { width, height, data } = band;
-        for (let x = 0; x < width; x++) {
-          let hit = false;
-          for (let y = 0; y < height; y++) {
-            if (data[(y * width + x) * 4 + 3] > 12) { hit = true; break; }
-          }
-          if (hit && !inRun) groups++;
-          inRun = hit;
-        }
-      }
-      ok(groups === n, "the canvas painted one tick per step", `painted ${groups}, expected ${n}`);
-    } else {
-      ok(true, "tick count check skipped — ticks overlap at this width", `spacing ${spacing.toFixed(2)}px`);
-    }
+  const painted = countPaintedTicks(n);
+  if (painted.usable) {
+    ok(painted.groups === n, "the canvas painted one tick per step",
+      `painted ${painted.groups}, expected ${n}`);
+  } else {
+    ok(true, "tick count check skipped — ticks overlap at this width", painted.why);
   }
 
   // ---- keyboard ----------------------------------------------------------
@@ -156,6 +176,69 @@ export async function runSelfTest(): Promise<void> {
     }
   } else {
     ok(false, "the demo tape contains at least one failed step");
+  }
+
+  // ---- filtering ----------------------------------------------------------
+  {
+    const ticksBefore = countPaintedTicks(n);
+    const tools = [...new Set(view.steps.map((x) => x.tool).filter(Boolean))];
+    ok(tools.length > 0, "the demo tape calls tools", tools.join(","));
+
+    const note = document.querySelector(".filter-note");
+    ok(!!note && /summaries only/i.test(note.textContent ?? ""),
+      "the search control states that it covers summaries, not full text",
+      note?.textContent ?? "missing");
+
+    api().setFilter({ ...NO_FILTER, tools: [tools[0]] });
+    await settle(4);
+    const m = api().matches;
+    ok(m > 0 && m < n, "filtering to one tool matches some steps but not all", `${m} of ${n}`);
+
+    const shown = document.querySelector(".filter-count")?.textContent ?? "";
+    ok(shown.includes(String(m)), "the match count is on screen", shown);
+
+    // Dimmed, not deleted: the rail must still carry every step, or the
+    // timeline would lie about where the run spent its time.
+    ok(Number(slider?.getAttribute("aria-valuemax")) === n,
+      "filtering does not change the number of steps on the track");
+    const ticksAfter = countPaintedTicks(n);
+    if (ticksBefore.usable && ticksAfter.usable) {
+      ok(ticksAfter.groups === ticksBefore.groups,
+        "filtering dims ticks rather than removing them",
+        `${ticksAfter.groups} painted, was ${ticksBefore.groups}`);
+    }
+
+    // The playhead is left alone when it stops matching.
+    const stranded = [...api().mask].findIndex((v) => !v);
+    if (stranded >= 0) {
+      api().setPos(stranded);
+      await settle(3);
+      ok(api().pos === stranded, "a playhead that stops matching is not moved", `pos=${api().pos}`);
+      const flag = document.querySelector(".filter-out");
+      ok(!!flag && (flag.textContent ?? "").trim().length > 0,
+        "…and it is marked out of filter in words", flag?.textContent ?? "missing");
+
+      // n now means "next match", not "next failure".
+      api().seekNext(1);
+      await settle(3);
+      ok(api().mask[api().pos] === 1, "n steps to the next match while a filter is active",
+        `pos=${api().pos}`);
+    }
+
+    api().setFilter(NO_FILTER);
+    await settle(4);
+    ok(api().matches === n || !document.querySelector(".filter-out"),
+      "clearing the filter releases the playhead");
+    ok(!document.querySelector(".filter-out"), "the out-of-filter marker is gone once cleared");
+
+    // Search covers previews.
+    const withPreview = view.steps.find((x) => x.tool === tools[0]);
+    api().setFilter({ ...NO_FILTER, query: tools[0].toLowerCase() });
+    await settle(4);
+    ok(api().matches > 0, "search matches a tool name", `${api().matches} for "${tools[0]}"`);
+    ok(!!withPreview, "the searched tool exists in the view");
+    api().setFilter(NO_FILTER);
+    await settle(3);
   }
 
   // ---- colour is never the only signal ------------------------------------

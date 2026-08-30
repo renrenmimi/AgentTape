@@ -30,6 +30,10 @@ type Props = {
   steps: Step[];
   pos: number;
   onPos: (n: number) => void;
+  /** One byte per step: 0 is dimmed by the active filter. null means no filter. */
+  mask?: Uint8Array | null;
+  /** n and p. The page decides whether they mean failures or matches. */
+  onSeek?: (dir: 1 | -1) => void;
   height?: number;
 };
 
@@ -134,7 +138,7 @@ function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: numb
   }
 }
 
-export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
+export default function Timeline({ steps, pos, onPos, mask = null, onSeek, height = 84 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const head = useRef<HTMLCanvasElement>(null);
@@ -211,50 +215,135 @@ export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
       g.fillRect(a, AXIS_Y - 7, b - a, 14);
     }
 
-    // Ticks, in two passes: the ordinary ones first, then the failures over
-    // the top, so a failure is never painted over by the step next to it.
+    // Ticks. A filter *dims* what does not match rather than removing it, so
+    // the density and position of every step stay honest — otherwise a
+    // filtered timeline lies about where the run spent its time.
+    const cols = Math.max(1, Math.floor(w - PAD * 2));
     g.lineWidth = 1.25;
-    let lastKind = "";
-    for (let i = 0; i < n; i++) {
-      const s = steps[i];
-      if (s.err) continue;
-      if (s.kind !== lastKind) {
-        const col = s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
-        g.fillStyle = col;
-        g.strokeStyle = col;
-        g.globalAlpha = s.kind === "meta" ? 0.45 : 0.85;
-        lastKind = s.kind;
+
+    if (wide) {
+      // Few enough steps that each gets its own shape. Dimmed first, matching
+      // over the top, failures last, so nothing important is painted over.
+      const passes: { keep: (i: number) => boolean; scale: number }[] = mask
+        ? [{ keep: (i) => !mask[i], scale: 0.18 }, { keep: (i) => !!mask[i], scale: 1 }]
+        : [{ keep: () => true, scale: 1 }];
+
+      for (const pass of passes) {
+        let lastKind = "";
+        let lastAlpha = -1;
+        for (let i = 0; i < n; i++) {
+          const s = steps[i];
+          if (s.err || !pass.keep(i)) continue;
+          const alpha = (s.kind === "meta" ? 0.45 : 0.85) * pass.scale;
+          if (s.kind !== lastKind) {
+            const col = s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
+            g.fillStyle = col;
+            g.strokeStyle = col;
+            lastKind = s.kind;
+          }
+          if (alpha !== lastAlpha) { g.globalAlpha = alpha; lastAlpha = alpha; }
+          drawGlyph(g, s.kind, xOf(i, w), RAIL_Y, wide);
+        }
       }
-      drawGlyph(g, s.kind, xOf(i, w), RAIL_Y, wide);
+
+      g.fillStyle = risk;
+      g.strokeStyle = risk;
+      g.lineWidth = 1.6;
+      for (const pass of passes) {
+        g.globalAlpha = pass.scale;
+        for (let i = 0; i < n; i++) {
+          if (!steps[i].err || !pass.keep(i)) continue;
+          drawFail(g, xOf(i, w), RAIL_Y, wide);
+        }
+      }
+    } else {
+      // Below three pixels a step no longer has a shape of its own, and many
+      // steps share a column. Deciding what each column holds first turns
+      // ~7,700 draw calls into ~1,500 — which is what makes re-painting the
+      // rail on every keystroke of a search cheap enough to keep up.
+      const tone = new Uint8Array(cols);     // 0 empty · 1 ordinary · 2 tool
+      const solid = new Uint8Array(cols);    // holds at least one non-meta step
+      const held = new Uint16Array(cols);    // steps in this column
+      const hit = new Uint16Array(cols);     // matching steps in this column
+      const err = new Uint8Array(cols);
+      const errHit = new Uint8Array(cols);
+
+      for (let i = 0; i < n; i++) {
+        const s = steps[i];
+        const c = Math.min(cols - 1, Math.max(0, Math.floor(xOf(i, w) - PAD)));
+        const matched = !mask || mask[i] === 1;
+        if (s.err) {
+          err[c] = 1;
+          if (matched) errHit[c] = 1;
+          continue;
+        }
+        const t = s.kind === "tool-call" || s.kind === "tool-result" ? 2 : 1;
+        if (t > tone[c]) tone[c] = t;
+        if (s.kind !== "meta") solid[c] = 1;
+        held[c]++;
+        if (matched) hit[c]++;
+      }
+
+      if (!mask) {
+        let lastStyle = -1;
+        for (let c = 0; c < cols; c++) {
+          if (!tone[c]) continue;
+          const style = tone[c] * 2 + solid[c];
+          if (style !== lastStyle) {
+            g.fillStyle = tone[c] === 2 ? tool : tick;
+            g.globalAlpha = solid[c] ? 0.85 : 0.45;
+            lastStyle = style;
+          }
+          g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
+        }
+      } else {
+        // A column here holds about five steps, so "bright if any of them
+        // matched" would light up almost the whole rail and tell you nothing.
+        // The dim base is every step — position and density stay honest — and
+        // the bright bar's *height* is the share of that column that matched,
+        // which makes a filtered rail a density plot rather than a blanket.
+        g.globalAlpha = 0.18;
+        g.fillStyle = tick;
+        for (let c = 0; c < cols; c++) {
+          if (tone[c]) g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
+        }
+        g.globalAlpha = 1;
+        let lastTone = -1;
+        for (let c = 0; c < cols; c++) {
+          if (!hit[c]) continue;
+          if (tone[c] !== lastTone) {
+            g.fillStyle = tone[c] === 2 ? tool : tick;
+            lastTone = tone[c];
+          }
+          const h = Math.max(3, Math.round((10 * hit[c]) / held[c]));
+          g.fillRect(PAD + c, RAIL_Y - h / 2, 1, h);
+        }
+      }
+
+      g.fillStyle = risk;
+      let lastErrAlpha = -1;
+      for (let c = 0; c < cols; c++) {
+        if (!err[c]) continue;
+        const alpha = mask && !errHit[c] ? 0.18 : 1;
+        if (alpha !== lastErrAlpha) { g.globalAlpha = alpha; lastErrAlpha = alpha; }
+        g.fillRect(PAD + c - 1, RAIL_Y - 8, 2, 16);
+      }
     }
     g.globalAlpha = 1;
-    g.fillStyle = risk;
-    g.strokeStyle = risk;
-    g.lineWidth = 1.6;
-    for (let i = 0; i < n; i++) {
-      if (!steps[i].err) continue;
-      drawFail(g, xOf(i, w), RAIL_Y, wide);
-    }
     g.lineWidth = 1.25;
 
-    // failure rail: presence and position, not just colour
-    g.fillStyle = risk;
-    for (let i = 0; i < n; i++) {
-      if (!steps[i].err) continue;
-      const x = xOf(i, w);
-      g.beginPath();
-      g.moveTo(x, FAIL_Y + 3);
-      g.lineTo(x + 3, FAIL_Y - 3);
-      g.lineTo(x - 3, FAIL_Y - 3);
-      g.closePath();
-      g.fill();
-    }
-
-    // time axis marks
+    // time axis marks — aggregated the same way once there are more steps than
+    // pixels, since past that point the extra draws land on top of each other.
     g.fillStyle = dim;
     g.globalAlpha = 0.75;
-    for (let i = 0; i < n; i++) {
-      g.fillRect(tx(steps[i].t, w) - 0.4, AXIS_Y - 3, 0.8, 6);
+    if (n > cols) {
+      const axis = new Uint8Array(cols);
+      for (let i = 0; i < n; i++) {
+        axis[Math.min(cols - 1, Math.max(0, Math.floor(tx(steps[i].t, w) - PAD)))] = 1;
+      }
+      for (let c = 0; c < cols; c++) if (axis[c]) g.fillRect(PAD + c, AXIS_Y - 3, 1, 6);
+    } else {
+      for (let i = 0; i < n; i++) g.fillRect(tx(steps[i].t, w) - 0.4, AXIS_Y - 3, 0.8, 6);
     }
     g.globalAlpha = 1;
 
@@ -282,7 +371,7 @@ export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
         }
       }
     }
-  }, [n, steps, tx, xOf, firstT, lastT]);
+  }, [n, steps, tx, xOf, firstT, lastT, mask]);
 
   // ---- playhead layer -----------------------------------------------------
 
@@ -404,15 +493,6 @@ export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
     try { hit.current?.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
   };
 
-  const jumpFail = useCallback(
-    (dir: 1 | -1) => {
-      for (let i = pos + dir; i >= 0 && i < n; i += dir) {
-        if (steps[i].err) { onPos(i); return; }
-      }
-    },
-    [pos, n, steps, onPos],
-  );
-
   const onKey = (e: React.KeyboardEvent) => {
     if (!n) return;
     const big = e.shiftKey ? 10 : 1;
@@ -423,8 +503,8 @@ export default function Timeline({ steps, pos, onPos, height = 84 }: Props) {
     else if (e.key === "PageUp") next = pos - 50;
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = n - 1;
-    else if (e.key === "n" || e.key === "N") { e.preventDefault(); jumpFail(1); return; }
-    else if (e.key === "p" || e.key === "P") { e.preventDefault(); jumpFail(-1); return; }
+    else if (e.key === "n" || e.key === "N") { e.preventDefault(); onSeek?.(1); return; }
+    else if (e.key === "p" || e.key === "P") { e.preventDefault(); onSeek?.(-1); return; }
     else return;
     e.preventDefault();
     onPos(Math.max(0, Math.min(n - 1, next)));

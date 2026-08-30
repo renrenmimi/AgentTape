@@ -19,6 +19,7 @@ import { loadJsonlString } from "./lib/load.ts";
 import { redactTape, redactStep, auditRedacted, placeholder, scrubName } from "./lib/redact.ts";
 import { tapeFromFile, serializeTape, TAPE_FORMAT } from "./lib/tape.ts";
 import { summarise } from "./lib/summary.ts";
+import { EMPTY_FILTER, applyFilter, buildFilterIndex, isActive, seek } from "./lib/filter.ts";
 
 const root = new URL("./", import.meta.url).pathname;
 let failed = 0, checked = 0;
@@ -378,6 +379,61 @@ section("indexer");
   ok(out.meta.versions.length === 1, "writer versions are collected", out.meta.versions.join(","));
 }
 
+// ---------------------------------------------------------------- filtering
+
+section("filtering");
+{
+  const fx = buildFilterIndex(tape.steps, pairs);
+  const all = (f) => applyFilter(tape.steps, fx, f);
+
+  ok(!isActive(EMPTY_FILTER), "the empty filter is not active");
+  ok(all(EMPTY_FILTER).count === tape.steps.length, "the empty filter matches every step");
+
+  ok(fx.tools.length === 2, "the tool list holds every tool called", fx.tools.map((t) => t.name).join(","));
+  ok(fx.tools.every((t) => t.count === 1), "each tool carries its call count");
+  ok(fx.tools[0].count >= fx.tools[1].count, "the tool list is ordered by call count");
+
+  // A result inherits its call's name, so filtering to one tool gives you both
+  // halves of the exchange rather than a call with its answer filtered away.
+  const call = tape.steps.find((s) => s.kind === "tool-call" && s.tool === "Bash");
+  const result = tape.steps.find((s) => s.kind === "tool-result" && s.toolUseId === call.toolUseId);
+  ok(fx.tool[result.i] === "Bash", "a tool_result inherits the name of its call", fx.tool[result.i]);
+  const byTool = all({ ...EMPTY_FILTER, tools: ["Bash"] });
+  ok(byTool.mask[call.i] === 1 && byTool.mask[result.i] === 1,
+    "filtering to one tool keeps both the call and its result");
+  ok(byTool.count === 2, "and nothing else", String(byTool.count));
+
+  const big = tape.steps.filter((s) => s.chars >= 60).length;
+  ok(all({ ...EMPTY_FILTER, minChars: 60 }).count === big, "the size threshold counts what it should");
+  ok(all({ ...EMPTY_FILTER, minChars: 10 ** 9 }).count === 0, "an impossible threshold matches nothing");
+
+  ok(all({ ...EMPTY_FILTER, query: "bash" }).count === 2, "search finds a tool name case-insensitively");
+  ok(all({ ...EMPTY_FILTER, query: "BASH" }).count === 2, "…in either case");
+  ok(all({ ...EMPTY_FILTER, query: "assistant" }).count > 0, "search covers record types");
+  ok(all({ ...EMPTY_FILTER, query: "zzzznotpresentzzzz" }).count === 0, "a miss is a miss");
+
+  // The filters AND together rather than widening each other.
+  const both = all({ tools: ["Bash"], minChars: 10 ** 9, query: "" });
+  ok(both.count === 0, "two filters intersect rather than union");
+
+  // Search reads previews, and previews are truncated at PREVIEW_MAX. A body
+  // longer than that has a tail the search cannot see — which is exactly the
+  // limit the UI states, asserted here so it stays true.
+  const long = tape.steps.find((s) => s.chars > 200 && s.preview.length < s.chars);
+  ok(!!long, "the fixture has a body longer than its preview");
+  ok(fx.hay[long.i].length < long.chars,
+    "the searchable text is the preview, not the body",
+    `${fx.hay[long.i].length} chars searchable of ${long.chars}`);
+
+  const mask = all({ ...EMPTY_FILTER, tools: ["Bash"] }).mask;
+  const first = [...mask].indexOf(1);
+  const last = [...mask].lastIndexOf(1);
+  ok(seek(mask, -1, 1) === first, "seek forward finds the first match");
+  ok(seek(mask, last, 1) === -1, "seek forward stops at the end rather than wrapping");
+  ok(seek(mask, tape.steps.length, -1) === last, "seek back finds the last match");
+  ok(seek(mask, first, -1) === -1, "seek back stops at the start");
+}
+
 // ---------------------------------------------------------------- the demo
 
 section("demo tape");
@@ -485,6 +541,15 @@ const libFiles = sources.filter((f) => f.includes("/lib/"));
 const libFetch = libFiles.filter((f) => /\bfetch\s*\(/.test(readFileSync(f, "utf8")));
 ok(libFetch.length === 0, "the parsing library makes no network calls at all",
   libFetch.map((f) => f.replace(root, "")).join(","));
+
+// Search must never reach a body. tape.body() is the only way to one, so the
+// filter module must not mention it — this is the assertion that keeps the
+// stated limit honest as the code changes.
+const filterSrc = read("lib/filter.ts");
+ok(!/\bbody\b/.test(filterSrc.replace(/\/\/.*$/gm, "")),
+  "the filter module never reaches for a body");
+ok(!/\bfetch\s*\(|\bslice\s*\(\s*s\.off/.test(filterSrc),
+  "the filter module reads nothing off disk");
 
 // the CLI helper's guarantees, asserted against its source
 const helper = read("bin/agenttape.mjs");
