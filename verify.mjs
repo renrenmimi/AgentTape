@@ -619,6 +619,15 @@ ok(/willReadFrequently/.test(canvasSrc), "the context helper decides about readb
 ok(/has\("selftest"\)/.test(canvasSrc),
   "…and only asks for a readable canvas when the self-test will read it");
 
+// CI must not be mistaken for covering the in-page suite. The file says so;
+// this makes the file keep saying so.
+const ci = existsSync(join(root, ".github/workflows/ci.yml"))
+  ? readFileSync(join(root, ".github/workflows/ci.yml"), "utf8") : "";
+ok(ci !== "", "the CI workflow is committed");
+ok(/selftest/.test(ci), "the workflow records that it does not run the in-page suite");
+ok(!/@v[1-4]\b/.test(ci), "no CI action is pinned to a deprecated major version",
+  (ci.match(/uses: \S+/g) ?? []).join(" "));
+
 // The helper probe must not fire on every load: a refused connection is logged
 // in red by the network layer, where no catch can reach it.
 const emptySrc = read("app/empty-state.tsx");
