@@ -1,10 +1,16 @@
 #!/usr/bin/env node
-// AgentTape's local helper: a session list and a read-only file server.
+// AgentTape's local helper: a session list and a read-only transcript feed.
 //
 //   node bin/agenttape.mjs            list recent sessions, then serve
 //   node bin/agenttape.mjs --list     list and exit
 //   node bin/agenttape.mjs --all      do not stop at the twenty most recent
 //   node bin/agenttape.mjs --port N   default 4319
+//
+// It runs alongside `npm run dev` and answers two questions for the page:
+// which sessions exist, and give me that one. It does not serve the app —
+// Next.js already does that, and a second way to serve it would be a second
+// path-resolution surface to get wrong in a tool whose entire job is refusing
+// to hand over the wrong file.
 //
 // It is a convenience, not a requirement: the web app parses a dropped file
 // with no helper at all, and the deployed build is drag-and-drop only.
@@ -226,38 +232,6 @@ function hostIsLoopback(req) {
   return name === "127.0.0.1" || name === "localhost" || name === "[::1]";
 }
 
-const MIME = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain; charset=utf-8",
-};
-
-const APP_ROOT = resolve(new URL("../out", import.meta.url).pathname);
-
-async function serveStatic(req, res, pathname) {
-  const root = await realpath(APP_ROOT).catch(() => null);
-  if (!root) return false;
-  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  if (rel.includes("..")) return false;
-  const candidate = resolve(root, rel);
-  const real = await realpath(candidate).catch(() =>
-    realpath(candidate + ".html").catch(() => null));
-  if (!real || !real.startsWith(root + sep)) return false;
-  const st = await stat(real).catch(() => null);
-  if (!st?.isFile()) return false;
-  res.writeHead(200, {
-    "content-type": MIME[extname(real)] ?? "application/octet-stream",
-    "content-length": st.size,
-  });
-  createReadStream(real).pipe(res);
-  return true;
-}
-
 const json = (res, code, body) => {
   const text = JSON.stringify(body);
   res.writeHead(code, {
@@ -315,15 +289,14 @@ function serve(initial) {
 
     if (url.pathname === "/health") { json(res, 200, { ok: true, projects: PROJECTS }); return; }
 
-    if (await serveStatic(req, res, url.pathname)) return;
-
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end(
       "AgentTape helper.\n\n" +
-      "  GET /sessions            the session index\n" +
-      "  GET /file?project=&session=   one transcript, read-only\n\n" +
-      "No built app found at ./out. Run `npm run dev` in another terminal and\n" +
-      "open http://localhost:3000 — the page will find this helper on its own.\n",
+      "  GET /sessions                  the session index\n" +
+      "  GET /file?project=&session=    one transcript, read-only\n" +
+      "  GET /health                    liveness\n\n" +
+      "This is not the app. Run `npm run dev` in another terminal and open\n" +
+      "http://localhost:3000 — the page will find this helper on its own.\n",
     );
   });
 
@@ -331,7 +304,8 @@ function serve(initial) {
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`\n  helper on http://127.0.0.1:${PORT}  (loopback only, read-only)`);
     console.log(`  serving transcripts from ${PROJECTS}`);
-    console.log("  open http://localhost:3000 with `npm run dev`, or build to ./out\n");
+    console.log("  run `npm run dev` in another terminal and open http://localhost:3000");
+    console.log("  — the page finds this helper on its own.\n");
     console.log("  Ctrl-C to stop.");
   });
   server.on("error", (e) => {
