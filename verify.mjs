@@ -459,7 +459,7 @@ section("delegated work");
   ok(!DELEGATION_TOOLS.has("TaskCreate") && !DELEGATION_TOOLS.has("TaskUpdate"),
     "the task-list tools are not mistaken for delegation");
 
-  ok(agentIdFromName("agent-a2cc28d63813de803.jsonl") === "a2cc28d63813de803",
+  ok(agentIdFromName("agent-0123456789012345.jsonl") === "0123456789012345",
     "an agent id is read off its filename");
   ok(agentIdFromName("/some/where/agent-b1.jsonl") === "b1", "…including from a path");
   ok(agentIdFromName("session.jsonl") === "", "a main transcript is not an agent file");
@@ -964,6 +964,26 @@ for (const f of sources) {
 }
 ok(homeLeaks.length === 0, "no file contains this machine's home directory", homeLeaks.join(", "));
 ok(uuidLeaks.length === 0, "no file contains anything shaped like a session id", uuidLeaks.join(", "));
+
+// Session ids are uuids and subagent ids are not — an agent id is a bare run of
+// hex, which the uuid check above sails straight past. This one caught a real
+// one: the doc comment on agentIdFromName was written with an id copied out of
+// my own subagents directory, in a repository that is public.
+//
+// The invariant is that no shipped file contains a run of eight or more hex
+// characters that includes a letter. Placeholders are written as digits so they
+// keep it. package-lock is exempt: its hex comes from upstream version strings.
+const HEXY = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b/;
+const hexLeaks = [];
+for (const f of sources) {
+  if (f.includes("package-lock")) continue;
+  for (const [i, lineText] of readFileSync(f, "utf8").split("\n").entries()) {
+    if (HEXY.test(lineText)) hexLeaks.push(`${f.replace(root, "")}:${i + 1}`);
+  }
+}
+ok(hexLeaks.length === 0,
+  "no file contains a bare run of hex that could be a session or agent id",
+  hexLeaks.slice(0, 4).join(", "));
 ok(remoteUrls.length === 0, "no shipped file names a host other than 127.0.0.1",
   remoteUrls.join(", "));
 
