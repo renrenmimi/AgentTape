@@ -658,14 +658,34 @@ export default function Page() {
       loadTapeFile: (f: TapeFile) => adopt(tapeFromFile(f)),
     };
     (window as unknown as Record<string, unknown>).__agenttape = api;
-    if (!selftest) return;
-    // Armed before the suite starts, and idempotent, so a throw during the
-    // first render is collected rather than missed.
+  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting,
+      jumpTrace, shownIndex, summary]);
+
+  /**
+   * Start the suite once, from an effect that has nothing to re-run for.
+   *
+   * It used to be scheduled inside the effect above, whose dependency list is
+   * every piece of state on this page. That effect re-runs constantly, and each
+   * run cleared the pending timeout and set a new one — harmless while the
+   * suite was idle, and not harmless at all once it had started: the suite
+   * changes state, the state change re-runs the effect, and four hundred
+   * milliseconds later a *second* suite began, then a third, then a fourth.
+   *
+   * Four concurrent runs mutating one page is the whole explanation for two
+   * rounds of symptoms — eighteen assertions that looked like cross-block
+   * leakage, a score that moved when unrelated waits were added, `matches 4/4`
+   * against a view that was thirty-one steps a frame earlier, and a playhead
+   * reading 247 on a thirty-one step tape.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!new URLSearchParams(window.location.search).has("selftest")) return;
+    // Armed before the suite starts, so a throw during the first render is
+    // collected rather than missed.
     armErrorTrap();
     const id = window.setTimeout(() => { void runSelfTest(); }, 400);
     return () => window.clearTimeout(id);
-  }, [tape, view, pos, gpos, setPos, goToGlobal, onDemo, onExport, adopt, filter, matches, mask, seekNext, delegations, origin, loadSubagent, comparing, assertions, rules, keysOpen, asserting,
-      jumpTrace, shownIndex, summary]);
+  }, []);
 
   // ---- render -------------------------------------------------------------
 
