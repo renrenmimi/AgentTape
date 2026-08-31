@@ -111,6 +111,21 @@ const CASES = [
     expect: /actually ran/,
   },
   {
+    name: "a regex literal that a per-line scanner reads as something else",
+    why: "the two counters should disagree — that is the only way to catch a scanner that stops early",
+    // AgentLab's bug, in the shape this repository can actually wear it. A
+    // quote inside a regex is harmless to a per-line scanner; a regex whose
+    // *text* matches the scanner's own exclusion pattern is not, and one of
+    // those was already sitting in verify.mjs uncounted. So the plant is an
+    // assertion whose regex says `const ok = ` — the per-line method drops it,
+    // the character-level one counts it, and they have to notice.
+    mutate: (dir) => edit(dir, "app/selftest.ts", (s) =>
+      s.replace('  await home();\n  await keyMoves("ArrowRight");',
+        '  ok(/const ok = "x"/.test("y") === false, "a plant with a regex in it");\n' +
+        '  await home();\n  await keyMoves("ArrowRight");')),
+    expect: /agree about where they are/,
+  },
+  {
     name: "the in-page suite gains an assertion without updating its total",
     why: "the static counter should notice a call site the declaration does not",
     mutate: (dir) => edit(dir, "app/selftest.ts", (s) =>

@@ -47,6 +47,93 @@ let failed = 0, checked = 0;
  * the set is compared with the call sites in the source at the end.
  */
 const fired = new Set();
+
+/**
+ * Where `name(` is called, by character offset, skipping comments, strings,
+ * template literals and regex literals.
+ *
+ * The second method, and the reason there has to be one. A per-line regex is a
+ * scanner with no idea what it is looking at: this repository's counted lines
+ * out of existence because they mentioned the word "skipped", and then counted
+ * one more out because a regex literal *inside an assertion* said
+ * `const skip = \(` and the exclusion pattern matched the regex's own text.
+ * That is AgentLab's bug wearing a different hat — a scanner that stops or
+ * skips on an incidental character sequence and reports a smaller number
+ * confidently — and the only reliable way to find it is a second method that
+ * disagrees.
+ */
+function callOffsets(src, names) {
+  const out = [];
+  const isId = (c) => (c >= "0" && c <= "9") || (c >= "A" && c <= "Z") ||
+    (c >= "a" && c <= "z") || c === "_" || c === "$";
+  const n = src.length;
+  let i = 0, prev = "";
+  while (i < n) {
+    const c = src[i];
+    if (c === "/" && src[i + 1] === "/") { while (i < n && src[i] !== "\n") i++; continue; }
+    if (c === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2; continue;
+    }
+    if (c === '"' || c === "'") {
+      const q = c; i++;
+      while (i < n && src[i] !== q) i += src[i] === "\\" ? 2 : 1;
+      i++; prev = q; continue;
+    }
+    if (c === "`") {
+      i++;
+      let depth = 0;
+      while (i < n) {
+        if (src[i] === "\\") { i += 2; continue; }
+        if (src[i] === "$" && src[i + 1] === "{") { depth++; i += 2; continue; }
+        if (src[i] === "}" && depth > 0) { depth--; i++; continue; }
+        if (src[i] === "`" && depth === 0) break;
+        i++;
+      }
+      i++; prev = "`"; continue;
+    }
+    // A slash is a regex only where a value may begin. Getting this wrong in
+    // the other direction is what makes a scanner swallow the rest of a file.
+    if (c === "/" && (prev === "" || "(,=:[!&|?{};+-*%~^<>".includes(prev))) {
+      i++;
+      let cls = false;
+      while (i < n) {
+        if (src[i] === "\\") { i += 2; continue; }
+        if (src[i] === "[") cls = true;
+        else if (src[i] === "]") cls = false;
+        else if (src[i] === "/" && !cls) break;
+        else if (src[i] === "\n") break;
+        i++;
+      }
+      i++;
+      while (i < n && "gimsuyd".includes(src[i])) i++;
+      prev = "/"; continue;
+    }
+    if (isId(c)) {
+      let j = i;
+      while (j < n && isId(src[j])) j++;
+      const word = src.slice(i, j);
+      if (names.includes(word) && src[j] === "(" && prev !== "." && !isId(prev)) out.push(i);
+      prev = word[word.length - 1];
+      i = j; continue;
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out;
+}
+
+/** Those offsets as line numbers. */
+function callLinesOf(src, names) {
+  const nl = [];
+  for (let i = 0; i < src.length; i++) if (src[i] === "\n") nl.push(i);
+  return new Set(callOffsets(src, names).map((o) => {
+    let lo = 0, hi = nl.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (nl[m] < o) lo = m + 1; else hi = m; }
+    return lo + 1;
+  }));
+}
 const callerLine = () => {
   const at = (new Error().stack ?? "").split("\n")[3] ?? "";
   const m = at.match(/verify\.mjs:(\d+):/);
@@ -1793,16 +1880,32 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // therefore cannot see an assertion that is written and never reached; this
   // one counts call sites in the source and cannot see how many times a loop
   // goes round. Neither is sufficient and together they are.
+  // Counted twice, by methods that fail differently. The per-line one used to
+  // be the only one and it was wrong: it dropped six real assertions, five
+  // because their text contained the word "skipped" and one because a regex
+  // literal inside the assertion read `const skip = \(` and the exclusion
+  // pattern matched the regex's own text. A scanner that stops early reports a
+  // smaller number confidently, so the only way to catch one is another
+  // scanner that does not.
   const CALL = /(?:^|[^\w.$])(ok|skip)\(/;
-  const callSites = st.split("\n")
-    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
-    .filter((l) => CALL.test(l))
-    .filter((l) => !/const (ok|skip)\s*=|ok:\s|skip:\s|skipped/.test(l)).length;
+  const byLine = new Set(st.split("\n")
+    .map((l, i) => [l, i + 1])
+    .filter(([l]) => !/^\s*(\/\/|\*)/.test(l))
+    .filter(([l]) => CALL.test(l))
+    .filter(([l]) => !/const (ok|skip)\s*=/.test(l))
+    .map(([, n]) => n));
+  const byToken = callLinesOf(st, ["ok", "skip"]);
+  const onlyLine = [...byLine].filter((n) => !byToken.has(n));
+  const onlyToken = [...byToken].filter((n) => !byLine.has(n));
+  ok(onlyLine.length === 0 && onlyToken.length === 0,
+    "…and two counters that fail differently agree about where they are",
+    `line-only ${onlyLine.join(",") || "none"} · token-only ${onlyToken.join(",") || "none"}`);
+
   const declaredSites = Number(st.match(/DECLARED_CALL_SITES = (\d+);/)?.[1] ?? -1);
   ok(declaredSites > 100, "…and how many call sites it has", String(declaredSites));
-  ok(callSites === declaredSites,
+  ok(byToken.size === declaredSites,
     "…and the source contains exactly that many",
-    `${callSites} counted, ${declaredSites} declared`);
+    `${byToken.size} counted, ${declaredSites} declared`);
   ok(Number(declared?.[1]) > 100, "…and the number is the real one, not a placeholder",
     declared?.[1] ?? "missing");
   ok(/results\.length \+ 1 === want\.total/.test(st),
@@ -1837,6 +1940,13 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // be running on the machine — which is not something a gate can be built on,
   // and next round this becomes a gate on a runner where the helper is never
   // up. The driver decides now, and each mode declares what it produces.
+  const self = read("verify.mjs");
+  ok(/function callOffsets\(/.test(self) && /callLinesOf\(/.test(self),
+    "call sites are counted by a scanner that knows what it is looking at");
+  ok(/const byToken = callLinesOf\(/.test(self),
+    "…and the second counter is that scanner, not a copy of the first");
+  ok(/const unseen = \[\.\.\.fired\]/.test(self) && /ok\(unseen\.length === 0,/.test(self),
+    "…and the running program's own record is checked against it, both ways");
   ok(/const HELPER_MODE =/.test(st) && /has\("helper"\)/.test(st),
     "the page is told which mode to run in rather than probing for one");
   ok(!/const reachable = await fetch/.test(st),
@@ -2095,6 +2205,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(g !== "", "the counter guard is committed");
   ok(!/^import .* from "(?!node:)/m.test(g), "…and imports nothing that is not built into Node");
   for (const [what, re] of [
+    ["a regex a per-line scanner misreads", /regex literal that a per-line scanner/],
     ["an assertion appended after process.exit", /appended after process\.exit/],
     ["an assertion deleted", /an assertion deleted/],
     ["a check defined and never called", /defined and never called/],
@@ -2105,6 +2216,9 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // Caught is not the same as caught by the right thing.
   ok(/c\.expect\.test\(r\.out\)/.test(g),
     "…and requires each break to fail the check that is supposed to catch it");
+  ok(/expect: \/agree about where they are\//.test(g),
+    "…and the regex plant specifically has to trip the two counters disagreeing, " +
+    "not merely the total moving");
   ok(/changed nothing — it missed/.test(g),
     "…and treats a mutation that edited nothing as a miss, not as a pass");
   ok(/process\.exit\(failed \? 1 : 0\)/.test(g), "…and exits non-zero when one is not caught");
@@ -2175,15 +2289,26 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // if somebody moves an assertion below this marker to hide it, the count moves.
   const mine = sites.filter((n) => n > self);
   const dead = sites.filter((n) => n <= self && !fired.has(n));
+  // The other direction, which is the scanner-stopped-early signature: a line
+  // that ran an assertion and that the scanner never saw. `fired` is collected
+  // by the running program and owes nothing to any regex, so the two methods
+  // fail in entirely different ways.
+  const byTokenSelf = callLinesOf(src.join("\n"), ["ok"]);
+  const unseen = [...fired].filter((n) => !byTokenSelf.has(n));
   ok(self > 0 && sites.length > 20,
     "the reachability audit can see this file's own call sites",
     `${sites.length} call sites, marker at line ${self}`);
   // Three from the audit itself, one from the declared-total check that has to
   // run after every other assertion in the file has been counted.
-  ok(mine.length === 4, "…and only its own assertions sit below the marker",
+  // Four from the audit and the declared-total check, plus the one that
+  // compares the scanner with the runtime record.
+  ok(mine.length === 5, "…and only its own assertions sit below the marker",
     `${mine.length} below line ${self}`);
   ok(dead.length === 0, "every assertion in verify.mjs actually ran",
     dead.length ? `never ran: line ${dead.join(", line ")}` : "");
+  ok(unseen.length === 0,
+    "…and the scanner saw every line that ran one",
+    unseen.length ? `ran but not counted: line ${unseen.join(", line ")}` : "");
 }
 
 // ---------------------------------------------------------------- how many checks there are
@@ -2193,7 +2318,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 579;
+const EXPECTED_CHECKS = 586;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
