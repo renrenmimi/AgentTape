@@ -229,7 +229,10 @@ const until = async (cond: () => boolean, tries = 240): Promise<boolean> => {
   }
   return cond();
 };
-const settle = async (n = 3) => { for (let i = 0; i < n; i++) await frame(); };
+// `settle(n)` used to live here: wait n frames and hope. Every one of its
+// thirty-nine call sites is gone, replaced by a wait on the thing the next line
+// reads, so the function is gone too — a helper that can only express the wrong
+// kind of wait is a temptation, not a convenience.
 
 function api(): Api {
   return (window as unknown as Record<string, Api>).__agenttape;
@@ -615,32 +618,38 @@ async function runBlocks(
     slider()?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
   };
 
+  /**
+   * Press a key at the playhead and wait for the playhead to move.
+   *
+   * Waiting for the *change* rather than for the expected value keeps the
+   * assertion's teeth: it still fails, with the value in the note, when the key
+   * lands somewhere else. Waiting a fixed number of frames kept nothing — the
+   * next line reads `api().pos`, and frames are not a statement about that.
+   */
+  const keyMoves = async (k: string, opts: KeyboardEventInit = {}) => {
+    const from = api().pos;
+    key(k, opts);
+    await until(() => api().pos !== from, 60);
+  };
+
   await home();
-  await settle();
-  key("ArrowRight");
-  await settle();
+  await keyMoves("ArrowRight");
   ok(api().pos === 1, "ArrowRight advances the playhead", `pos=${api().pos}`);
-  key("ArrowRight", { shiftKey: true });
-  await settle();
+  await keyMoves("ArrowRight", { shiftKey: true });
   ok(api().pos === 11, "Shift+ArrowRight advances by ten", `pos=${api().pos}`);
-  key("End");
-  await settle();
+  await keyMoves("End");
   ok(api().pos === n - 1, "End jumps to the last step", `pos=${api().pos}`);
-  key("Home");
-  await settle();
+  await keyMoves("Home");
   ok(api().pos === 0, "Home jumps to the first step", `pos=${api().pos}`);
 
   const firstFail = view.steps.findIndex((s) => s.err);
   if (firstFail >= 0) {
-    key("n");
-    await settle();
+    await keyMoves("n");
     ok(api().pos === firstFail, "n jumps to the next failed step", `pos=${api().pos} expected ${firstFail}`);
     const secondFail = view.steps.findIndex((s, i) => i > firstFail && s.err);
     if (secondFail >= 0) {
-      key("n");
-      await settle();
-      key("p");
-      await settle();
+      await keyMoves("n");
+      await keyMoves("p");
       ok(api().pos === firstFail, "p jumps back to the previous failed step", `pos=${api().pos}`);
     }
   } else {
@@ -651,7 +660,8 @@ async function runBlocks(
   {
     await need("delegated work is visible even with no subagent file");
     api().loadTapeFile(tapeWithDelegation());
-    await settle(6);
+    // The next line reads `api().delegations`, so that is what is waited on.
+    await until(() => api().delegations.length === 1, 120);
     const dels = api().delegations;
     ok(dels.length === 1, "the Agent call is found as a delegation", `${dels.length}`);
     ok(dels[0].run === null, "…with no run attached");
@@ -739,13 +749,14 @@ async function runBlocks(
     // rules in place and some of them fail on the demo too. Driving it would
     // change what is being asserted, so it stays direct and says so.
     api().setRules([{ kind: "max-context", n: 1 }]);
-    await settle(5);
+    await until(() => document.querySelectorAll(".rule-fail").length === 1, 120);
     ok(document.querySelectorAll(".rule-fail").length === 1, "an impossible ceiling fails");
     const go = document.querySelector<HTMLElement>(".rule-go");
     ok(!!go && /^step \d/.test((go.textContent ?? "").trim()),
       "…and links the offending step", go?.textContent ?? "missing");
     go?.click();
-    await settle(5);
+    // Two sources on the next two lines, so both are waited on.
+    await until(() => !document.querySelector(".asserts") && !!document.querySelector(".track-hit"), 120);
     ok(!document.querySelector(".asserts"), "following the link closes the panel");
     ok(!!document.querySelector(".track-hit"), "…and lands back on the workbench");
 
@@ -755,7 +766,8 @@ async function runBlocks(
     // Not driveable at all: the tool pickers only offer tools that appear in
     // the tape, and a vacuous rule is by definition about one that does not.
     api().setRules([{ kind: "before", first: "NoSuchTool", then: "AlsoMissing" }]);
-    await settle(5);
+    await until(() => api().assertions[0]?.vacuous === true
+      && document.querySelectorAll(".rule-vacuous").length === 1, 120);
     ok(api().assertions[0].vacuous === true, "a rule with nothing to check is marked vacuous");
     ok(document.querySelectorAll(".rule-vacuous").length === 1,
       "…and shown differently from a pass");
@@ -781,13 +793,14 @@ async function runBlocks(
       format: "agenttape-rules/1",
       rules: [{ kind: "max-repeats", n: 3 }, { kind: "ends-clean" }],
     }));
-    await settle(6);
+    await until(() => api().rules.length === 2
+      && document.querySelectorAll(".rule").length === 2, 120);
     ok(api().rules.length === 2, "a loaded set replaces the rules", String(api().rules.length));
     ok(document.querySelectorAll(".rule").length === 2, "…and the panel redraws for it");
     ok(!document.querySelector(".rule-problems"), "…with nothing to complain about");
 
     drop(JSON.stringify({ format: "wrong", rules: [{ kind: "nonsense" }] }));
-    await settle(6);
+    await until(() => document.querySelectorAll(".rule-problems li").length >= 2, 120);
     const said = [...document.querySelectorAll(".rule-problems li")].map((e) => (e.textContent ?? "").trim());
     ok(said.length >= 2, "a broken set is reported rather than silently ignored", said.join(" | "));
     ok(said.some((x) => /unknown rule kind/.test(x)), "…naming the rule that was wrong");
@@ -797,7 +810,7 @@ async function runBlocks(
       "the panel says the same rules run outside the browser");
 
     document.querySelector<HTMLElement>(".asserts .cmp-head .btn:last-of-type")?.click();
-    await settle(4);
+    await until(() => !document.querySelector(".asserts"), 120);
     ok(!document.querySelector(".asserts"), "the panel closes");
   }
 
@@ -807,8 +820,7 @@ async function runBlocks(
     // A tape with a delegation, and a subagent run attached to it by hand, so
     // the nested workbench has something to open without a file on disk.
     api().loadTapeFile(tapeWithDelegation());
-    for (let i = 0; i < 40 && api().delegations.length !== 1; i++) await settle(1);
-    await settle(3);
+    await until(() => api().delegations.length === 1, 120);
 
     await goTo(1);
     const enter = [...document.querySelectorAll(".nested button")]
@@ -816,14 +828,15 @@ async function runBlocks(
     ok(!enter, "an unloaded delegation offers no way in");
 
     api().attachSyntheticRun?.();
-    for (let i = 0; i < 40 && !api().delegations[0]?.run; i++) await settle(1);
-    await settle(3);
+    // Two sources: the run has to be attached and the button has to be drawn.
+    await until(() => !!api().delegations[0]?.run
+      && [...document.querySelectorAll(".nested button")].some((b) => /step through/i.test(b.textContent ?? "")), 120);
     const enter2 = [...document.querySelectorAll(".nested button")]
       .find((b) => /step through/i.test(b.textContent ?? "")) as HTMLElement | undefined;
     ok(!!enter2, "a loaded delegation can be stepped through");
 
     enter2?.click();
-    await settle(5);
+    await until(() => !!document.querySelector(".nested-wb"), 120);
     const wb = document.querySelector(".nested-wb");
     ok(!!wb, "the nested workbench opens");
     ok(wb?.getAttribute("role") === "dialog", "…as a dialog");
@@ -836,12 +849,13 @@ async function runBlocks(
     const before = Number(nested?.getAttribute("aria-valuenow"));
     nested?.focus();
     nested?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
-    await settle(4);
+    await until(() => Number(document.querySelector(".nested-wb .track-hit")
+      ?.getAttribute("aria-valuenow")) !== before, 60);
     ok(Number(document.querySelector(".nested-wb .track-hit")?.getAttribute("aria-valuenow")) === before + 1,
       "its playhead moves with the arrow keys");
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    await settle(5);
+    await until(() => !document.querySelector(".nested-wb") && !!document.querySelector(".track-hit"), 120);
     ok(!document.querySelector(".nested-wb"), "Escape leaves the delegated run");
     ok(!!document.querySelector(".track-hit"), "…and the parent is where it was");
 
@@ -895,7 +909,7 @@ async function runBlocks(
       "no divergence is shown when the runs never diverged");
 
     document.querySelector<HTMLElement>(".cmp-head .btn")?.click();
-    await settle(4);
+    await until(() => !document.querySelector(".cmp") && !!document.querySelector(".track-hit"), 120);
     ok(!document.querySelector(".cmp"), "the panel closes");
     ok(!!document.querySelector(".track-hit"), "…and leaves the workbench as it was");
   }
@@ -981,8 +995,9 @@ async function runBlocks(
         "…and it is marked out of filter in words", flag?.textContent ?? "missing");
 
       // n now means "next match", not "next failure".
+      const wasAt = api().pos;
       trackKey("n");
-      await settle(3);
+      await until(() => api().pos !== wasAt, 60);
       ok(api().mask[api().pos] === 1, "n steps to the next match while a filter is active",
         `pos=${api().pos}`);
     }
@@ -1025,8 +1040,11 @@ async function runBlocks(
     const posEl = () => (document.querySelector(".filter-pos")?.textContent ?? "").trim();
     ok(!!document.querySelector(".filter-pos"), "the filter bar reports the playhead's match position");
     for (let i = 0; i < 200 && !/· last$/.test(posEl()); i++) {
+      const was = posEl();
       trackKey("n");
-      await settle(1);
+      // The readout is what the loop condition reads, so that is what is
+      // waited on. Bounded tightly because this runs up to two hundred times.
+      await until(() => posEl() !== was, 10);
     }
     ok(/· last$/.test(posEl()), "…and says so when the playhead is on the last match", posEl());
     const before = api().pos;
@@ -1062,7 +1080,7 @@ async function runBlocks(
     const menu = document.querySelector<HTMLDetailsElement>(".tool-menu");
     if (menu) {
       menu.open = true;
-      await settle(3);
+      await until(() => document.querySelectorAll(".tool-opt").length > 0, 60);
       const all = document.querySelectorAll(".tool-opt").length;
       const search = document.querySelector<HTMLInputElement>(".tool-menu-search");
       if (all > 6) {
@@ -1071,7 +1089,7 @@ async function runBlocks(
         ok(!search, "a short tool menu does not need one", `${all} tools`);
       }
       menu.open = false;
-      await settle(2);
+      await until(() => document.querySelectorAll(".tool-opt").length === 0, 30);
     }
   }
 
@@ -1136,7 +1154,7 @@ async function runBlocks(
       "Tab stays inside the dialog rather than escaping behind it");
 
     press("Escape");
-    await settle(4);
+    await until(() => !document.querySelector(".sheet"), 120);
     ok(!document.querySelector(".sheet"), "Escape closes it");
 
     // c and a reach the two overlays, and Escape gets back out of each.
@@ -1145,32 +1163,34 @@ async function runBlocks(
     ok(!!document.querySelector(".cmp"), "c opens the comparison");
     ok(document.activeElement === document.querySelector(".cmp"), "…with focus inside it");
     press("Escape");
-    await settle(5);
+    await until(() => !document.querySelector(".cmp"), 120);
     ok(!document.querySelector(".cmp"), "Escape closes the comparison");
 
     press("a");
     await until(() => !!document.querySelector(".asserts"));
     ok(!!document.querySelector(".asserts"), "a opens the assertions");
     press("Escape");
-    await settle(5);
+    await until(() => !document.querySelector(".asserts"), 120);
     ok(!document.querySelector(".asserts"), "Escape closes them");
 
     // The keys must not fire while typing.
     const box = document.querySelector<HTMLInputElement>("input.filter-input");
     box?.focus();
     box?.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
-    await settle(3);
+    // Nothing is supposed to happen, so there is no consequence to wait for —
+    // wait for the page to stop changing instead of guessing at three frames.
+    await quiet(() => document.querySelectorAll(".cmp, .asserts, .sheet").length);
     ok(!document.querySelector(".cmp"), "the shortcuts do not fire inside a text box");
     box?.blur();
-    await settle(2);
+    await until(() => document.activeElement !== box, 30);
 
     // / puts the caret in the search box from anywhere.
     document.querySelector<HTMLElement>(".track-hit")?.focus();
     press("/");
-    await settle(3);
+    await until(() => document.activeElement === box, 60);
     ok(document.activeElement === box, "/ jumps to the search box");
     (document.activeElement as HTMLElement)?.blur();
-    await settle(2);
+    await until(() => document.activeElement !== box, 30);
 
     const keyBtn = [...document.querySelectorAll(".strip-actions button")]
       .find((b) => /keyboard/i.test(b.getAttribute("aria-label") ?? ""));
@@ -1353,8 +1373,7 @@ async function runBlocks(
   api().loadTapeFile(syntheticTape(BIG));
   // Wait for the render rather than assuming a fixed number of frames: the
   // blocks before this one do network work, and a fixed wait made this flaky.
-  for (let i = 0; i < 60 && api().view?.steps.length !== BIG; i++) await settle(1);
-  await settle(2);
+  await until(() => api().view?.steps.length === BIG, 240);
   const big = api().view;
   ok(!!big && big.steps.length === BIG, "the synthetic tape loaded", `${big?.steps.length ?? 0} steps`);
   // The one position that is not reachable by keyboard in reasonable time:
@@ -1362,8 +1381,8 @@ async function runBlocks(
   // messages panel at the far end of a large tape rather than about the
   // playhead, so it is set directly and said out loud.
   api().setPos(BIG - 1);
-  for (let i = 0; i < 60 && api().pos !== BIG - 1; i++) await settle(1);
-  await settle(2);
+  // Two sources on the lines below: the playhead, and the panel drawn from it.
+  await until(() => api().pos === BIG - 1 && !!document.querySelector(".vlist"), 240);
   const list = document.querySelector(".vlist");
   const rendered = list?.querySelectorAll(".entry").length ?? 0;
   const expected = Number(list?.getAttribute("data-count") ?? 0);

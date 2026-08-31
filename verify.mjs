@@ -1892,6 +1892,41 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(/const slider = \(\) =>/.test(st),
     "…and no DOM node is held across a block either: `need` remounts the workbench");
 
+  // The DOM twin of that rule, enforced rather than remembered.
+  //
+  // `need` returns to the empty state and loads the demo again, which remounts
+  // the workbench. An element captured before that is detached and answers
+  // about a run no longer on screen — which is what `const slider =
+  // document.querySelector(".track-hit")` did, silently, for three rounds. So:
+  // no single element may be bound at the function-body level of `runBlocks`
+  // while a `need` still lies ahead of it. Bindings inside a block are fine,
+  // because a block's own `need` runs before them; `.length` is fine because a
+  // number cannot go stale.
+  {
+    const lines = st.split("\n");
+    const start = lines.findIndex((l) => /^async function runBlocks\(/.test(l));
+    const lastNeed = lines.findLastIndex((l) => /await need\(/.test(l));
+    const held = [];
+    for (let i = start; i < lastNeed && i < lines.length; i++) {
+      if (/^ {2}const \w+ = document\.querySelector\(/.test(lines[i])) {
+        held.push(`${i + 1}: ${lines[i].trim().slice(0, 50)}`);
+      }
+    }
+    ok(start > 0 && lastNeed > start,
+      "the remount boundaries in the suite can be located", `${start + 1}..${lastNeed + 1}`);
+    ok(held.length === 0,
+      "…and no element is bound across one of them", held.join(" · "));
+  }
+
+  // Every wait observes the thing the next line reads. `settle(n)` could only
+  // ever express "wait some frames and hope", so all thirty-nine of its call
+  // sites are gone and so is the helper — a function that can only say the
+  // wrong thing is a temptation, not a convenience.
+  ok(!stLines.some((l) => /\bsettle\(/.test(l)),
+    "no wait in the suite counts frames");
+  ok(!/const settle = /.test(st),
+    "…and the helper that could only count them is gone, not merely unused");
+
   // What is still driven directly, and the requirement that each one says why.
   const direct = stLines.filter((l) => /api\(\)\.(setPos|setRules|loadTapeFile|attachSyntheticRun)/.test(l));
   ok(direct.length <= 8, "what is left calling into the page directly is a short list",
@@ -2158,7 +2193,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 575;
+const EXPECTED_CHECKS = 579;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
