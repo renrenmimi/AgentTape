@@ -1268,15 +1268,15 @@ for (const [what, re] of [
   ["…written by several writer versions", /writer versions/i],
   ["a redacted tape keeps tool names on purpose", /keeps tool names/i],
   ["assertions can only be about shape", /only be about shape/i],
-  ["CI does not run the in-page suite", /CI does not run the in-page suite/i],
+  ["what the in-page suite can and cannot see, now that it runs in CI",
+    /covers what a browser can see, and nothing else/i],
   ["the comparison's blind spot", /blind spot follows from the rule/i],
   ["what a nested run still does not show", /nested run is not the whole workbench/i],
   ["that cross-session statistics need the helper or a granted folder",
     /statistics come from the helper, or from a folder you grant/i],
   ["…and that a deployed build loses the helper and only the helper",
     /deployment loses the helper and nothing else/i],
-  ["that CI has already missed something by not opening a browser",
-    /failing on `main`/i],
+
   ["what the session cache trusts", /trusts size and mtime/i],
   ["that an assertion can only be about shape", /assertion can only be about shape/i],
   ["that a report and a rule set carry tool names", /carry tool names/i],
@@ -1793,6 +1793,49 @@ for (const rel of exampleRules) {
 
 // The README has to make the first minute work for somebody who has never seen
 // this: the version they need, and what happens if they just run it.
+// What a green tick covers, and why anyone should believe it. The table is the
+// claim; the paragraph under it is the reason, and the reason is that this
+// suite was red for two rounds while CI was green. Both are asserted, because a
+// guarantee without its history is a feature list.
+{
+  const cover = readme.slice(readme.indexOf("### What a green tick covers"),
+    readme.indexOf("### On the sibling project"));
+  ok(cover.length > 400, "the README says what a green tick covers");
+  for (const [what, re] of [
+    ["verify.mjs", /verify\.mjs`? \|/],
+    ["the counter guard", /npm run counters`? \|/],
+    ["the in-page suite", /npm run selftest`? \|/],
+    ["the rule checker", /agenttape check`? \|/],
+  ]) ok(re.test(cover), "…naming " + what);
+  ok(/164\/168 passed · 0 failed ·\s*\n?4 not run here/.test(cover),
+    "…and the three numbers the in-page job asserts");
+  // Numbers in prose drift. These three are checked against the things they
+  // describe, because a README that says 591 when the file runs 599 is the
+  // same class of wrong as a counter that stops early.
+  const said = (re) => Number(cover.match(re)?.[1] ?? -1);
+  // Read out of the file rather than off the binding: the constant is declared
+  // at the end, after every check has been counted, so it is in its temporal
+  // dead zone here — and the literal is what a reader would compare anyway.
+  const declaredChecks = Number(
+    read("verify.mjs").match(/const EXPECTED_CHECKS = (\d+);/)?.[1] ?? -1);
+  ok(said(/`node verify\.mjs` \| (\d+) assertions/) === declaredChecks,
+    "…with verify.mjs's own total, not a number that has drifted from it",
+    `README ${said(/`node verify\.mjs` \| (\d+) assertions/)}, file ${declaredChecks}`);
+  const inPage = Number(read("app/selftest.ts").match(/DECLARED_ASSERTIONS = (\d+);/)?.[1] ?? -1);
+  ok(said(/the in-page suite, (\d+) assertions/) === inPage,
+    "…and the in-page suite's declared total", `README ${said(/the in-page suite, (\d+) assertions/)}, file ${inPage}`);
+  const guardCases = (read("scripts/counters.mjs").match(/^  \{\n    name: /gm) ?? []).length + 1;
+  ok(/six self-inflicted breakages/.test(cover) && guardCases === 6,
+    "…and the number of breakages the guard actually inflicts", String(guardCases));
+
+  ok(/red on `main`\s*\n?while CI was green/.test(cover),
+    "…and that this suite was red for two rounds while CI was green");
+  ok(/247 on a thirty-one step tape/.test(cover),
+    "…and that the diagnosis came from sampling rather than from reading the code");
+  ok(/each keep their\s*\n?own driver/.test(readme) && !/shared driver/.test(readme),
+    "…and that the two projects keep their own drivers rather than sharing one");
+}
+
 ok(/22\.18/.test(readme), "the README states the Node version the checker needs");
 ok(/node bin\/agenttape\.mjs check /.test(readme), "…and gives the check command as one line");
 ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they can copy");
@@ -2341,7 +2384,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 591;
+const EXPECTED_CHECKS = 602;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
