@@ -362,8 +362,14 @@ const DECLARED_ASSERTIONS = 168;
  * simply never gets there. This one is counted statically by verify.mjs, from
  * outside, and the two have to move together. Adding an assertion means
  * changing both numbers, deliberately, in the same commit.
+ *
+ * It said 161 for a round. Not because an assertion was added since — because
+ * the counter that produced it was a per-line regex that dropped any line whose
+ * text contained the word "skipped". A scanner that stops early reports a
+ * smaller number confidently, which is why this is now counted twice by methods
+ * that fail differently and the two have to agree.
  */
-export const DECLARED_CALL_SITES = 161;
+export const DECLARED_CALL_SITES = 162;
 
 const HELPER_MODE =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("helper");
