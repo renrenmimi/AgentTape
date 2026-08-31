@@ -22,8 +22,4 @@ fixtures/real/
 # not this repository's default. verify.mjs asserts it stays untracked.
 docs/corpus-notes.md
 
-# The same, written up. Prose about how one person works, computed from their
-# own transcripts. Whether it is published is their call; the script that
-# produces it is committed so the figures can be redone.
-docs/findings.draft.md
 

@@ -1511,21 +1511,47 @@ ok(corpusSrc !== "", "the script that produces them is committed, so the figures
 ok(!/readFile|createReadStream|readdir|homedir/.test(corpusSrc),
   "…and it opens nothing itself: it reads the statistics index on stdin and no more");
 
-// The write-up of those findings is the same class of artefact and gets the
-// same rule. Prose about how one person works, computed from their own
-// transcripts: the script is committed, the output is not.
-ok(/^docs\/findings\.draft\.md$/m.test(gitignore), "the findings draft is ignored by name");
-const draftSrc = existsSync(join(root, "scripts/findings-draft.mjs"))
-  ? readFileSync(join(root, "scripts/findings-draft.mjs"), "utf8") : "";
-ok(draftSrc !== "", "the script that writes it is committed");
-ok(!/readFile|createReadStream|readdir|homedir/.test(draftSrc),
-  "…and it too opens nothing: the index arrives on stdin");
-ok(/n=40|n=\$\{|one machine, one person/.test(draftSrc),
-  "…and it states the sample size in its own voice rather than in a footnote");
-const strayDrafts = files
-  .map((f) => f.replace(root, ""))
-  .filter((f) => /findings\.draft/.test(f) && f !== "docs/findings.draft.md");
-ok(strayDrafts.length === 0, "…and no copy of it sits outside that path", strayDrafts.join(", "));
+// The write-up, which is published now. It was withheld for four rounds because
+// it was a draft, not because the content could not be published — and the
+// thing that changed is that the two rates in it are stated as an invitation
+// with the tool that produces them attached, rather than as results.
+{
+  const gen = existsSync(join(root, "scripts/findings.mjs"))
+    ? readFileSync(join(root, "scripts/findings.mjs"), "utf8") : "";
+  ok(gen !== "", "the script that writes the article is committed, so the figures can be redone");
+  ok(!/readFile|createReadStream|readdir|homedir/.test(gen),
+    "…and it opens nothing itself: the summary arrives on stdin");
+  ok(!/parser\.ts|loadJsonl|createIndexer/.test(gen),
+    "…and parses nothing, so no path it is built through has held a sentence");
+
+  const art = read("docs/findings.md");
+  ok(art !== "", "the article is committed");
+  ok(!/\/Users\/|~\/\.claude/.test(art), "…and names no path");
+  ok(!/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/.test(art),
+    "…and no session id");
+  // Every backticked token in it has to be a tool name, a field name from the
+  // format, or a command. A project directory would show up here.
+  const ticked = [...art.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+  // A tool name, a field name, a field-and-value pair from the format, or a
+  // command. Anything else in backticks would be somebody's project directory.
+  const okToken = /^(mcp__[A-Za-z0-9_]+|[A-Za-z_][A-Za-z0-9_]*(: (true|"[a-z]+"))?|<synthetic>|node bin\/agenttape\.mjs stats|agenttape stats)$/;
+  const oddTokens = ticked.filter((t) => !okToken.test(t));
+  ok(ticked.length > 5 && oddTokens.length === 0,
+    "…and every name in it is a tool, a field or a command", oddTokens.join(", "));
+
+  ok(/n=\d+, one machine, one person/.test(art),
+    "…and it states the sample size in its own voice rather than in a footnote");
+  ok(/does not depend on my corpus/.test(art),
+    "findings 1 and 2 say why they do not rest on the sample size");
+  ok(/would not defend it in\s*\n?public as a general claim/.test(art) &&
+     /weakest of the four/.test(art),
+    "…and 3 and 4 say the opposite, in the author's own voice");
+  const points = (art.match(/agenttape(\.mjs)? stats/g) ?? []).length;
+  ok(points >= 4, "…and point at the subcommand that lets a reader answer them", String(points));
+  ok(/## What this does not establish/.test(art),
+    "the caveat is a section rather than a footnote");
+  ok(!/^docs\/findings\.md$/m.test(gitignore), "and the article is not ignored");
+}
 for (const rel of committedTapes) {
   const raw = JSON.parse(readFileSync(join(root, rel), "utf8"));
   if (rel === "public/demo.tape.json") {
@@ -2458,7 +2484,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 621;
+const EXPECTED_CHECKS = 629;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
