@@ -101,6 +101,15 @@ const HELP = `
       same answer: no rule reads a message body. Example rule sets are in
       examples/ — start with lenient.rules.json.
 
+  agenttape stats [<dir>]               four numbers over a corpus of sessions:
+                                        how often an API call failed, wall
+                                        against active time, where context
+                                        peaked, and failure rate per tool
+      --json                            print them as an object instead
+      Statistics only — no titles, no message text, and n printed with every
+      figure. Defaults to ~/.claude/projects. The numbers are yours, not mine;
+      docs/findings.md states mine and asks for yours.
+
   agenttape index                       build the cross-session statistics index
       --json                            print it, for analysis
 
@@ -214,8 +223,8 @@ async function listSessions({ deep }) {
  * agent; it is prose about the user's work, so it is never read here and never
  * sent. Only the ids and the agent type leave this function.
  */
-async function listAgents(project, session) {
-  const dir = join(PROJECTS, project, session, "subagents");
+async function listAgents(project, session, root = PROJECTS) {
+  const dir = join(root, project, session, "subagents");
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -289,29 +298,31 @@ async function writeCache(entries) {
  * changed. A transcript is only appended to, so file size and mtime together
  * are enough to know an entry is still true; either changing re-indexes it.
  */
-async function buildIndex({ onProgress } = {}) {
-  const cache = await readCache();
+async function buildIndex({ onProgress, root = PROJECTS } = {}) {
+  // The cache is keyed to the default tree. Somebody pointing this at another
+  // directory gets a fresh read rather than answers about a different corpus.
+  const cache = root === PROJECTS ? await readCache() : {};
   const entries = {};
   const found = [];
 
   let projects;
   try {
-    projects = await readdir(PROJECTS, { withFileTypes: true });
+    projects = await readdir(root, { withFileTypes: true });
   } catch {
-    return { sessions: [], cached: 0, indexed: 0, error: `no ${PROJECTS}` };
+    return { sessions: [], cached: 0, indexed: 0, error: `no ${root}` };
   }
 
   for (const p of projects) {
     if (!p.isDirectory()) continue;
     let files;
     try {
-      files = await readdir(join(PROJECTS, p.name), { withFileTypes: true });
+      files = await readdir(join(root, p.name), { withFileTypes: true });
     } catch {
       continue;
     }
     for (const f of files) {
       if (!f.isFile() || extname(f.name) !== ".jsonl") continue;
-      const path = join(PROJECTS, p.name, f.name);
+      const path = join(root, p.name, f.name);
       const st = await stat(path).catch(() => null);
       if (st) found.push({ project: p.name, session: f.name.slice(0, -6), path, st });
     }
@@ -337,9 +348,9 @@ async function buildIndex({ onProgress } = {}) {
   // by the transcript's own size and mtime, and a subagent file can appear or
   // change without either moving. Anything that can go stale that way is
   // recomputed on every build instead.
-  await writeCache(built.entries);
+  if (root === PROJECTS) await writeCache(built.entries);
   const sessions = byRecency(built.entries);
-  for (const s of sessions) s.agents = await listAgents(s.project, s.session);
+  for (const s of sessions) s.agents = await listAgents(s.project, s.session, root);
   return { sessions, cached: built.cached, indexed: built.indexed };
 }
 
@@ -732,6 +743,35 @@ if (argv[0] === "index") {
       `${built.cached} from cache · ${(ms / 1000).toFixed(1)}s`);
     console.log(`  cache: ${CACHE_FILE}\n`);
   }
+  process.exit(0);
+}
+
+if (argv[0] === "stats") {
+  requireNode("agenttape stats");
+  const where = argv.slice(1).find((a) => !a.startsWith("--"));
+  const root = where ? resolve(where) : PROJECTS;
+  const asJson = flag("json");
+  let last = 0;
+  const built = await buildIndex({
+    root,
+    onProgress: (done, total, indexed, cached) => {
+      if (asJson) return;
+      const now = Date.now();
+      if (now - last < 250 && done !== total) return;
+      last = now;
+      process.stderr.write(`\r  ${done}/${total} sessions · ${indexed} indexed · ${cached} cached   `);
+    },
+  });
+  if (!asJson) process.stderr.write("\n");
+  if (built.error) { console.error("  " + built.error); process.exit(2); }
+  if (!built.sessions.length) {
+    console.error(`  no sessions under ${root}`);
+    process.exit(2);
+  }
+  const { summariseCorpus, formatCorpus } = await import("../lib/corpus.ts");
+  const sum = summariseCorpus(built.sessions);
+  if (asJson) console.log(JSON.stringify(sum));
+  else console.log(formatCorpus(sum, root === PROJECTS ? "~/.claude/projects" : root.split(sep).slice(-2).join(sep)));
   process.exit(0);
 }
 

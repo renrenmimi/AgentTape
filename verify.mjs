@@ -28,6 +28,7 @@ import {
 } from "./lib/subagents.ts";
 import { buildSpine, compareSpines, realignLine, verdictLine } from "./lib/compare.ts";
 import { contextProfile, sessionStats } from "./lib/stats.ts";
+import { formatCorpus, summariseCorpus } from "./lib/corpus.ts";
 import { markdownReport, sparkline } from "./lib/report.ts";
 import { headings, parseInline, parseMarkdown, plainText, slugify } from "./lib/md.ts";
 import {
@@ -837,6 +838,55 @@ section("session statistics");
     stray.map(([p]) => p).join(", "));
   ok(strings.some(([p]) => p === ".project") && strings.some(([p]) => p === ".session"),
     "a session is identified by its project directory and its id");
+
+  // `agenttape stats` is built on these records and gets the same test the
+  // pasteable report gets — the output is meant to be shared, and a corpus
+  // summary that could carry a sentence would be worse than no subcommand.
+  {
+    const sum = summariseCorpus([st, st]);
+    const asJson = JSON.stringify(sum);
+    const asText = formatCorpus(sum, "~/.claude/projects");
+    ok(!asJson.includes(MARK) && !asText.includes(MARK),
+      "no text from a transcript reaches the corpus summary either");
+    ok(tape.steps.some((x) => x.preview.includes(MARK)),
+      "…and the marker really was in the records it was summarised from");
+
+    // The session's own identifiers are allowed in a record and are not
+    // allowed in a summary: a summary is about a corpus, not about a session.
+    ok(!asJson.includes("-a-project") && !asJson.includes("0000-1111"),
+      "…and neither does a project directory or a session id");
+    ok(!asText.includes("-a-project") && !/0000-1111/.test(asText),
+      "…including in the human-readable form");
+
+    // n on every figure. A rate without its n is the over-claim this exists to
+    // avoid, so the count appears beside each of the four.
+    for (const [what, re] of [
+      ["the failed-API share", /\d+ of 2 sessions contain one/],
+      ["the idle figures", /idle over 2 sessions/],
+      ["the context distribution", /of 2 passed 200k/],
+      ["the compaction rate", /\d+ of 2 compacted/],
+      ["the corpus size itself", /^\s*n = 2, one machine/m],
+    ]) ok(re.test(asText), "the summary prints n beside " + what, asText.slice(0, 0));
+
+    ok(/These are your numbers, not anybody else's/.test(asText),
+      "…and says whose numbers they are");
+
+    // Same rule as the session record: every string in a corpus summary must
+    // be a tool name or one of this module's own labels. A summary is about a
+    // corpus, so there is nothing else for a string to be.
+    const strs = [];
+    const dig = (v, path) => {
+      if (typeof v === "string") { strs.push([path, v]); return; }
+      if (Array.isArray(v)) return v.forEach((x, i) => dig(x, path + "[" + i + "]"));
+      if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) dig(x, path + "." + k);
+    };
+    dig(sum, "");
+    const named = /^(\.tools\[\d+\]\.tool|\.byClass\.(mcp|rest)\.tool)$/;
+    const odd = strs.filter(([path]) => !named.test(path));
+    ok(odd.length === 0, "…and every string in the summary is a tool name or a class label",
+      odd.map(([p]) => p).join(", "));
+    ok(strs.length > 0, "…with the check having something to check");
+  }
   ok(st.tools.Bash === 1 && st.tools.Agent === 1, "tool counts are by name",
     JSON.stringify(st.tools));
   ok(st.toolErrors.Bash === 1, "…and so are their failures");
@@ -1836,6 +1886,30 @@ for (const rel of exampleRules) {
     "…and that the two projects keep their own drivers rather than sharing one");
 }
 
+// ---------------------------------------------------------------- the corpus subcommand
+//
+// `agenttape stats` exists so a reader can put their own number next to mine.
+// It must therefore be one implementation, not a fourth: the helper and the
+// browser overview already reduce a session to a statistics record, and this
+// reduces those records to four figures without touching a transcript.
+
+{
+  const corp = read("lib/corpus.ts");
+  ok(corp !== "", "the corpus summary is a module, not a script's private arithmetic");
+  ok(!/readFile|createReadStream|readdir|homedir|fetch\(/.test(corp),
+    "…and it opens nothing: it takes records that have already been reduced");
+  ok(!/parser\.ts|loadJsonl|createIndexer/.test(corp),
+    "…and parses nothing either, which is what makes the privacy property structural");
+  ok(/import\("\.\.\/lib\/corpus\.ts"\)/.test(cliSrc),
+    "the subcommand calls that module rather than doing the arithmetic again");
+  ok(/buildIndex\(\{[\s\S]{0,120}root,/.test(cliSrc),
+    "…over the index the helper already builds, so there is one statistics path");
+  ok(/agenttape stats \[<dir>\]/.test(helpBlock),
+    "the help mentions it, including that it takes a directory");
+  ok(/n printed with every|n = /.test(helpBlock),
+    "…and that every figure comes with its n");
+}
+
 ok(/22\.18/.test(readme), "the README states the Node version the checker needs");
 ok(/node bin\/agenttape\.mjs check /.test(readme), "…and gives the check command as one line");
 ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they can copy");
@@ -2384,7 +2458,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 602;
+const EXPECTED_CHECKS = 621;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
