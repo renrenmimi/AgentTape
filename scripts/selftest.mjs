@@ -312,8 +312,16 @@ try {
     // The protocol saw these too. The suite has its own trap for them and
     // asserts on it; this is the second pair of eyes, and it catches anything
     // thrown before the trap was armed.
-    for (const t of [...new Set(threw)]) console.log(`  THREW ${t.split("\n")[0]}`);
-    for (const l of [...new Set(logged)]) console.log(`  LOG   ${l}`);
+    // Every distinct one, with how many times, rather than the first few.
+    const counted = (xs) => {
+      const n = new Map();
+      for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+      return [...n.entries()].sort((a, b) => b[1] - a[1]);
+    };
+    for (const [t, c] of counted(threw.map((x) => x.split("\n")[0]))) {
+      console.log(`  THREW ${t}${c > 1 ? `  ×${c}` : ""}`);
+    }
+    for (const [l, c] of counted(logged)) console.log(`  LOG   ${l}${c > 1 ? `  ×${c}` : ""}`);
 
     const short = res.total !== res.expected;
     const wrongSkips = res.skipped !== res.expectedSkips;
