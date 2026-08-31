@@ -1967,9 +1967,18 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // the first time somebody adds a route.
 
 {
-  const deploy = read("docs/deploying.md");
+  const deploy = read("docs/deploy.md");
   ok(deploy !== "", "the deployment note exists");
-  ok(/not deployed/i.test(deploy), "…and says out loud that this is not deployed");
+  ok(/^\*\*Deployed: <https:\/\/[a-z0-9.-]+>\*\*$/m.test(deploy),
+    "…and says where it is deployed, at the top");
+  ok(/npx vercel --prod --yes --name/.test(deploy),
+    "…with the command that produced it, including the lowercase name Vercel demands");
+  ok(/1\. |2\. |3\. |4\. |5\. /.test(deploy), "…as an ordered list rather than prose");
+  ok(/cannot do/.test(deploy) && /the helper, and only the helper/i.test(deploy),
+    "…and what the deployed build cannot do, which is the more useful half");
+  ok(/documented rather than measured/.test(deploy),
+    "…and marks the one browser claim it could not measure as such");
+  ok(/^\.vercel$/m.test(gitignore), "the CLI's own directory is ignored");
 
   // "Environment variables: none" is a fact about the source, so read the source.
   const envUsers = files
@@ -1991,7 +2000,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(!/force-dynamic|revalidate\s*=/.test(fmtPageSrc),
     "…and the one page that reads a file does it at build time, not per request");
 
-  ok(/docs\/deploying\.md/.test(readme), "the README points at the deployment note");
+  ok(/docs\/deploy\.md/.test(readme), "the README points at the deployment note");
 }
 
 // Two sentences at the top saying what this is for, before any claim about it.
@@ -2484,7 +2493,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 629;
+const EXPECTED_CHECKS = 634;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
