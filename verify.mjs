@@ -2062,6 +2062,29 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   ok(/console\.error = \(/.test(st), "…and what it logged as an error");
   ok(/TRAP\.threw\.length === 0/.test(st) && /TRAP\.logged\.length === 0/.test(st),
     "…and fails on any of it");
+
+  // A detection layer that works and a reporting layer that buries it come to
+  // the same thing. These two kept the first three distinct messages, so six of
+  // nine planted failures were invisible — measured, not supposed.
+  ok(!/TRAP\.(threw|logged)\)\]\.slice\(/.test(st) && !/slice\(0, 3\)/.test(st),
+    "the error collectors do not keep only the first few");
+  ok(/function tally\(xs: string\[\]\)/.test(st) && /×\$\{c\}/.test(st),
+    "…they aggregate instead: every distinct message, with how many times");
+  const drv4 = read("scripts/selftest.mjs");
+  ok(/const counted = \(xs\)/.test(drv4) && /×\$\{c\}/.test(drv4),
+    "…and the driver prints them the same way");
+
+  // The CLI matters more, because its output is what somebody pastes into an
+  // issue. Fifty-two rules with twenty-two failures at the far end came back
+  // with twenty-two in the list and twenty-two rows in the paste block; ten
+  // identical rules came back as ten. Nothing here may start cutting.
+  const cli = read("bin/agenttape.mjs");
+  const checkBody = cli.slice(cli.indexOf("async function check("), cli.indexOf("// ---------------------------------------------------------------- main"));
+  ok(!/\.slice\(0, ?\d+\)/.test(checkBody),
+    "the checker's own output truncates nothing");
+  const paste = cli.slice(cli.indexOf("function pasteBlock("), cli.indexOf("async function check("));
+  ok(!/\.slice\(0, ?\d+\)/.test(paste) && !/new Set\(/.test(paste),
+    "…and the block somebody pastes into an issue neither truncates nor de-duplicates");
   const pg = read("app/page.tsx");
   ok(/armErrorTrap\(\);/.test(pg),
     "…armed before the suite starts, so a throw during first render is caught too");
@@ -2318,7 +2341,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 586;
+const EXPECTED_CHECKS = 591;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 

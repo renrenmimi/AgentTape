@@ -67,6 +67,22 @@ let armed = false;
  */
 const ALLOWED_CONSOLE: { why: string; re: RegExp }[] = [];
 
+/**
+ * Distinct messages with their repeat counts, most frequent first, all of them.
+ *
+ * The alternative is truncation, and truncation is how a check that works
+ * reports nothing: the slots fill with whatever happened first and the distinct
+ * thing that mattered is past the cut. Long is better than silent.
+ */
+function tally(xs: string[]): string {
+  const n = new Map<string, number>();
+  for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+  return [...n.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, c]) => (c > 1 ? `${m} ×${c}` : m))
+    .join(" · ");
+}
+
 /** Called before the suite starts, so a throw during first render is caught too. */
 export function armErrorTrap(): void {
   if (armed) return;
@@ -450,7 +466,7 @@ export async function runSelfTest(): Promise<void> {
       if (t && junk.test(t)) guilty.push(el.className + ": " + t.slice(0, 40));
     }
     ok(guilty.length === 0, "no rendered text is a value that did not survive the trip",
-      [...new Set(guilty)].slice(0, 3).join(" · "));
+      tally(guilty));
 
     // The detail panel and the playhead can disagree without any assertion
     // above noticing: every one of them reads the panel and trusts that it is
@@ -466,10 +482,15 @@ export async function runSelfTest(): Promise<void> {
   }
 
   // Last, so it covers everything above it.
+  // Aggregated, never truncated. These two used to keep the first three
+  // distinct messages, which is exactly how a detection layer that works ends
+  // up reporting nothing useful: three copies of an early noisy error fill the
+  // slots and the one that matters sits past them, invisible. One line per
+  // distinct message, with how many times it happened, however many there are.
   ok(TRAP.threw.length === 0, "nothing threw or rejected during the whole run",
-    [...new Set(TRAP.threw)].slice(0, 3).join(" · "));
+    tally(TRAP.threw));
   ok(TRAP.logged.length === 0, "…and nothing was logged as a console error",
-    [...new Set(TRAP.logged)].slice(0, 3).join(" · "));
+    tally(TRAP.logged));
 
   const want = DECLARED[MODE];
   // Skips first, so the count assertion below is the last thing pushed and can
