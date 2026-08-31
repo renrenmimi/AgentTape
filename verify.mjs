@@ -1936,6 +1936,41 @@ for (const rel of exampleRules) {
     "…and that every figure comes with its n");
 }
 
+// ---------------------------------------------------------------- where it stopped
+//
+// The closing note. It exists so the next person does not have to discover the
+// four things this does not do, and so the two rounds when the suite was red
+// while CI was green stay written down — that paragraph is the reason to
+// believe the numbers above it, and it is the first thing a tidy-up would cut.
+
+{
+  const st9 = read("docs/state.md");
+  ok(st9 !== "", "there is a closing note");
+  ok(/https:\/\/agenttape\.vercel\.app/.test(st9), "…that says where the thing is");
+
+  for (const [what, re] of [
+    ["positional comparison rather than LCS", /aligns positionally, not by longest common/i],
+    ["what a nested run still does not show", /nested subagent run shows less/i],
+    ["the helper mode not being covered in CI", /helper mode is not covered in CI/i],
+    ["Safari's picker being documented rather than measured", /documented, not measured/i],
+  ]) ok(re.test(st9), "…and names the limit: " + what);
+
+  ok(/Four concurrent copies of\s*\n?`runSelfTest`/.test(st9),
+    "…and the cause of the two red rounds, in the number of copies");
+  ok(/247 on a thirty-one step tape/.test(st9),
+    "…and that the diagnosis came from sampling, not from reading the code");
+  ok(/statement about the suite/.test(st9),
+    "…and the lesson that outlives this repository");
+  ok(/151, 150, 135,\s*\n?147-unstable/.test(st9),
+    "…including the four repairs that each produced a different arbitrary number");
+
+  const declaredChecks9 = Number(
+    read("verify.mjs").match(/const EXPECTED_CHECKS = (\d+);/)?.[1] ?? -1);
+  ok(Number(st9.match(/`node verify\.mjs` \| (\d+) assertions/)?.[1] ?? -1) === declaredChecks9,
+    "…with this file's own total rather than one that has drifted from it");
+  ok(/docs\/state\.md/.test(readme), "and the README points at it");
+}
+
 ok(/22\.18/.test(readme), "the README states the Node version the checker needs");
 ok(/node bin\/agenttape\.mjs check /.test(readme), "…and gives the check command as one line");
 ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they can copy");
@@ -2493,7 +2528,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 634;
+const EXPECTED_CHECKS = 646;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
