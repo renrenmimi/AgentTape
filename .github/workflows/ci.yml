@@ -2,26 +2,19 @@ name: ci
 
 # What runs here: the static checker and a production build.
 #
-# What does NOT run here: the in-page suite at ?selftest=1. It asserts against
-# a live DOM — that the timeline painted one tick per step, that the messages
-# panel stays virtualised, that failure is stated in words as well as colour —
-# so it needs a browser driving a running server.
+# What also runs here, as of round eight: the in-page suite at ?selftest=1, in
+# the `in-page` job below. It asserts against a live DOM — that the timeline
+# painted one tick per step, that the messages panel stays virtualised, that
+# failure is stated in words as well as colour — so it needs a browser driving a
+# running server, which ubuntu-latest already has.
 #
 # This comment used to say that suite was run by hand before every merge. That
 # was true as an intention and false as a fact: eighteen of its assertions were
 # failing on main for the whole of round five, through six green runs of this
-# workflow, and nobody noticed until somebody opened a browser for an unrelated
-# reason. A green tick here has never covered it and does not now.
-#
-# The gap is known and dated rather than implied. `scripts/selftest.mjs` is a
-# dependency-free DevTools-protocol driver: it finds Chrome through CHROME_PATH
-# or the usual names, runs the suite, and exits non-zero on a failure, a short
-# run or an uncaught error. Wiring it in is round seven's job, together with the
-# sibling project, which needs the same driver. Until that lands, read this
-# workflow as covering verify.mjs and the build, and nothing about the DOM.
-#
-#   npm run build && npx next start -p 3000 &
-#   npm run selftest
+# workflow, because four concurrent copies of the suite were fighting over one
+# page. Nobody noticed until somebody opened a browser for an unrelated reason.
+# That is the reason the job below exists and the reason it asserts the exact
+# totals rather than only that nothing failed.
 
 on:
   push:
@@ -55,6 +48,58 @@ jobs:
       - run: npm run counters
 
       - run: npx next build
+
+  # The in-page suite, in no-helper mode, against a production build.
+  #
+  # No-helper is not inferred, it is asserted. The suite has two modes with two
+  # frozen shapes precisely so this is unambiguous, and a run that silently took
+  # the other branch and passed a different total is the exact failure the
+  # two-mode design exists to prevent — so the driver fails if the page reports
+  # a mode other than the one it asked for, and this job checks the contract
+  # line as well.
+  in-page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx next build
+
+      # Backgrounded and waited for, rather than slept at. The driver refuses to
+      # run against a server that is not serving this build — it compares
+      # .next/BUILD_ID with what the page carries — so a leftover process on the
+      # port is a red build rather than a green one against code nobody
+      # compiled.
+      - name: serve the production build
+        run: |
+          npx next start -p 3000 > /tmp/next.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:3000/; then
+              echo "serving after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::nothing came up on 127.0.0.1:3000"
+          tail -20 /tmp/next.log
+          exit 1
+
+      # The contract is three numbers, not one. Any of them moving is red:
+      # 168 declared, 4 skipped, 0 failed — and therefore 164 passed.
+      - name: the in-page suite, no-helper mode
+        env:
+          SELFTEST_TIMEOUT: "180000"
+        run: |
+          set -o pipefail
+          node scripts/selftest.mjs http://127.0.0.1:3000/ | tee /tmp/selftest.txt
+          grep -qF "[no-helper]" /tmp/selftest.txt \
+            || { echo "::error::the suite did not report no-helper mode"; exit 1; }
+          grep -qF "164/168 passed · 0 failed · 4 not run here · 168 declared, 4 skips declared" /tmp/selftest.txt \
+            || { echo "::error::the declared totals moved"; exit 1; }
+          echo "wall time: $(grep -o '[0-9.]*s$' /tmp/selftest.txt | tail -1)"
 
       # Dogfooding. The exit code of `agenttape check` is the whole feature —
       # it is what lets somebody put this in their own CI — so it is exercised

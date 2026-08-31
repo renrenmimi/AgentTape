@@ -386,6 +386,8 @@ export async function runSelfTest(): Promise<void> {
   const results: { ok: boolean; label: string; note?: string; skipped?: boolean }[] = [];
   const ok = (cond: boolean, label: string, note?: string) => {
     results.push({ ok: !!cond, label, note });
+    (window as unknown as Record<string, unknown>).__selftest_at =
+      { block: CURRENT_BLOCK, ran: results.length, at: Date.now() };
   };
   /**
    * An assertion that could not run here, kept in the count and not counted as
@@ -488,7 +490,19 @@ export async function runSelfTest(): Promise<void> {
  * what makes a score comparable, and a guard that inflates the denominator
  * every time somebody adds a block would undo it.
  */
+/**
+ * The last block the suite entered, published as it goes.
+ *
+ * For the case where nothing is reported at all. A browser that hangs and is
+ * killed by the runner's own limit produces no signal — that is the WebKit 2287
+ * failure this project already refused once — so the driver reads this on
+ * timeout and can say where it stopped instead of that it stopped.
+ */
+let CURRENT_BLOCK = "(before the first block)";
+
 async function need(block: string): Promise<void> {
+  CURRENT_BLOCK = block;
+  (window as unknown as Record<string, unknown>).__selftest_at = { block, at: Date.now() };
   // Overlays close the way they close for a person: Escape, which the page
   // documents in its own shortcut sheet. Repeated because Escape closes one
   // layer at a time, which is the behaviour rather than a limitation.
