@@ -349,7 +349,7 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 634 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `node verify.mjs` | 646 assertions over the parser, the redactor, the checker and this repository's own guarantees |
 | `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
 | `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
@@ -373,6 +373,12 @@ because each of them changed the phasing of four interleaved runs rather than
 fixing anything.
 
 That paragraph is the reason to trust the table above it.
+
+### Where this stands
+
+[`docs/state.md`](docs/state.md) records where the project stopped: what is
+verified by what, the four things it does not do, and the two rounds when this
+suite was red on `main` while CI was green. The verification work is finished.
 
 ### On the sibling project
 
