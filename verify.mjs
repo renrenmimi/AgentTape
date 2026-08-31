@@ -1997,12 +1997,15 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
   // Checked as the presence of the correction rather than the absence of the
   // old wording: the old sentence is quoted in the new one, and an absence
   // check on prose is a check anybody can dodge by rephrasing.
-  ok(/false as a fact/.test(wf) && /has never covered it/.test(wf),
-    "the workflow says what actually happens, not what was intended");
-  ok(/eighteen of its assertions were/.test(wf),
-    "…including the cost, in the number it cost");
-  ok(/scripts\/selftest\.mjs/.test(wf) && /round seven/.test(wf),
-    "…and names the gap, the driver that closes it, and when");
+  // The correction stays in the file after the gap it describes is closed.
+  // What it cost is why the job below asserts three numbers instead of one, so
+  // deleting the history would delete the reason for the design.
+  ok(/false as a fact/.test(wf),
+    "the workflow says what actually happened, not what was intended");
+  ok(/eighteen of its assertions were/.test(wf) && /four concurrent copies/.test(wf),
+    "…including the cost and the cause");
+  ok(/as of round eight/.test(wf) && /scripts\/selftest\.mjs/.test(wf),
+    "…and that the gap is closed, and by what");
 }
 
 // ---------------------------------------------------------------- one build directory each
@@ -2076,6 +2079,39 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     "…and CI runs it, since it needs no browser");
 }
 
+// ---------------------------------------------------------------- the in-page suite is a gate
+//
+// As of round eight it runs on every push. For two rounds before that it was
+// red on main while this workflow was green, so the job asserts the contract
+// rather than only that nothing failed: three numbers, and the mode it ran in.
+
+{
+  const wf = read(".github/workflows/ci.yml");
+  ok(/^  in-page:$/m.test(wf), "CI has a job for the in-page suite");
+  ok(/timeout-minutes:/.test(wf),
+    "…with a finite budget, so a hung browser reads as a failure and not as silence");
+  ok(/scripts\/selftest\.mjs http:\/\/127\.0\.0\.1:3000\//.test(wf),
+    "…driving a production build it served itself");
+  ok(/grep -qF "\[no-helper\]"/.test(wf),
+    "…asserting the mode it ran in rather than inferring it");
+  ok(/164\/168 passed · 0 failed · 4 not run here · 168 declared, 4 skips declared/.test(wf),
+    "…and all three declared numbers, since any of them moving is a red build");
+  ok(!/--helper/.test(wf), "…and never the helper mode, which cannot run on a runner");
+  ok(/set -o pipefail/.test(wf),
+    "…with the driver's exit code surviving the pipe into tee");
+  ok(/wall time:/.test(wf), "…and the wall time in the log");
+
+  const drv3 = read("scripts/selftest.mjs");
+  ok(/BUILD_ID/.test(drv3),
+    "the driver refuses a server that is not serving this build");
+  ok(/not serving this build/.test(drv3),
+    "…and says which build it wanted, since the accident is a leftover process");
+  ok(/__selftest_at/.test(drv3) && /__selftest_at/.test(read("app/selftest.ts")),
+    "…and a timeout names the block it stopped in rather than only that it stopped");
+  ok(/It never entered a block/.test(drv3),
+    "…including when it never got that far");
+}
+
 // ---------------------------------------------------------------- did every check run
 //
 // The audit the block above exists for. Every `ok(` in this file is a call site
@@ -2122,7 +2158,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 563;
+const EXPECTED_CHECKS = 575;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 

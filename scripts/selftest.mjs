@@ -19,7 +19,7 @@
 // its assertions at all today.
 
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +48,8 @@ const q = (u, k) => u + (u.includes("?") ? "&" : "?") + k;
 let TARGET = URL_ARG.includes("selftest=") ? URL_ARG : q(URL_ARG, "selftest=1");
 if (HELPER && !TARGET.includes("helper=")) TARGET = q(TARGET, "helper=1");
 const TIMEOUT_MS = Number(process.env.SELFTEST_TIMEOUT ?? 120_000);
+const T0 = Date.now();
+const secs = () => ((Date.now() - T0) / 1000).toFixed(1);
 
 // ---------------------------------------------------------------- finding chrome
 
@@ -145,15 +147,41 @@ function paste(res, url) {
 // server up. Waiting two minutes to say "the suite never reported" when the
 // answer is "nothing is listening" is the difference between a useful CI log
 // and a useless one.
+let servedHtml = "";
 try {
   const r = await fetch(TARGET, { method: "GET" });
   if (!r.ok) throw new Error(`${r.status}`);
+  servedHtml = await r.text();
 } catch (e) {
   console.error(
     `\n  Nothing is serving ${TARGET} (${e instanceof Error ? e.message : e}).\n` +
     "  Start it first:  npm run build && npx next start -p 3000\n",
   );
   process.exit(2);
+}
+
+/**
+ * Is the thing on that port the build in this working tree?
+ *
+ * A server left over from another terminal answers on the port and serves a
+ * build nobody here compiled — which has cost this project a morning twice, and
+ * a green run against a stale build is worse than a red one because it is a
+ * lie about code that was never loaded. `next build` writes a BUILD_ID and the
+ * served page carries it, so the two can simply be compared.
+ */
+try {
+  const want = (await readFile(new URL("../.next/BUILD_ID", import.meta.url), "utf8")).trim();
+  if (want && !servedHtml.includes(want)) {
+    console.error(
+      `\n  The server on that port is not serving this build.\n` +
+      `  .next/BUILD_ID is ${want} and the page does not mention it.\n` +
+      "  Something else is on the port, or the build is newer than the server.\n",
+    );
+    process.exit(2);
+  }
+} catch {
+  // No BUILD_ID: somebody is pointing this at a server built elsewhere, which
+  // is allowed. The check is for the accident, not for the deliberate case.
 }
 
 if (HELPER) {
@@ -257,15 +285,28 @@ try {
   }
 
   if (!res) {
+    // Where it got to, rather than that it did not get anywhere. A hang that
+    // the runner kills produces no signal at all; this produces one.
+    let at = null;
+    try {
+      const r = await rpc(ws, "Runtime.evaluate", {
+        expression: "JSON.stringify(window.__selftest_at ?? null)", returnByValue: true,
+      });
+      at = r.result?.value && r.result.value !== "null" ? JSON.parse(r.result.value) : null;
+    } catch { /* the page may be gone */ }
     console.error(`\n  The suite never reported. ${TARGET} did not set window.__selftest ` +
-      `within ${Math.round(TIMEOUT_MS / 1000)}s.`);
+      `within ${Math.round(TIMEOUT_MS / 1000)}s (${secs()}s elapsed).`);
+    console.error(at
+      ? `  It stopped in "${at.block}" after ${at.ran ?? 0} assertions, ` +
+        `${((Date.now() - at.at) / 1000).toFixed(1)}s ago.`
+      : "  It never entered a block, so the failure is before the first one.");
     if (threw.length) console.error("  The page threw: " + threw[0].split("\n")[0]);
     code = 2;
   } else {
     const bad = res.results.filter((r) => !r.ok && !r.skipped);
     console.log(`\n  [${res.mode}] ${res.pass}/${res.total} passed · ${bad.length} failed · ` +
       `${res.skipped} not run here · ${res.expected} declared, ` +
-      `${res.expectedSkips} skips declared\n`);
+      `${res.expectedSkips} skips declared · ${secs()}s\n`);
     for (const r of bad) console.log(`  FAIL  ${r.label}${r.note ? "   [" + r.note + "]" : ""}`);
 
     // The protocol saw these too. The suite has its own trap for them and
