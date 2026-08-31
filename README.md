@@ -292,9 +292,21 @@ is something you can send to somebody and have them open.
 
 ```bash
 node verify.mjs                              # static checks
-npm run dev                                  # then open:
-# http://localhost:3000/?selftest=1          # in-page assertions
+npm run counters                             # break the counting on purpose
+npm run build && npx next start -p 3000 &    # then, in another terminal:
+npm run selftest                             # the in-page suite, in a real browser
 ```
+
+`npm run selftest` needs Chrome and finds it through `CHROME_PATH` or the usual
+names on `PATH`. It has no dependencies: Node 22 has a built-in `WebSocket` and
+Chrome speaks the DevTools Protocol over it, so the whole driver is
+[`scripts/selftest.mjs`](scripts/selftest.mjs). Add `--helper` to run the four
+assertions that need the local helper; without it they are reported as *not run
+here*, counted in the denominator and outside the pass count, the way
+`agenttape check` treats a vacuous rule.
+
+For the page on its own, `npm run dev` and open
+`http://localhost:3000/?selftest=1`.
 
 `verify.mjs` imports the parser and the redactor as modules and runs them
 against fixtures generated in code — never against a real transcript, because a
@@ -330,10 +342,45 @@ CI also runs the rule checker against two committed fixture tapes, one that
 meets its expectations and one that breaks all five, so the non-zero exit is
 demonstrated rather than described.
 
-**CI runs `verify.mjs`, a production build and the rule checker. It does not run
-the in-page suite** — that needs a browser driving a running server. A green tick on a pull
-request does not cover it, which is why the workflow file says so and why every
-pull request records having run it by hand.
+### What a green tick covers
+
+Every push, on every pull request:
+
+| | |
+| --- | --- |
+| `node verify.mjs` | 602 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
+| `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
+| `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
+
+The in-page job asserts three numbers, not one — `164/168 passed · 0 failed ·
+4 not run here` — and that it ran in the mode it asked for. Any of those moving
+is a red build. It takes about fourteen seconds on a runner.
+
+**Why three numbers and not one.** For two rounds this suite was red on `main`
+while CI was green. Eighteen of its assertions were failing and every workflow
+run passed, because CI did not open a browser and nothing else was looking. The
+cause was not in the application: four concurrent copies of the suite were
+running on one page, because it was scheduled inside an effect whose dependency
+list was every piece of state on that page — the suite changed state, the effect
+re-ran, and four hundred milliseconds later another copy started.
+
+The diagnosis did not come from reading the code. It came from sampling the
+playhead position every frame and seeing it read 247 on a thirty-one step tape.
+Four attempted repairs before that each produced a different arbitrary number,
+because each of them changed the phasing of four interleaved runs rather than
+fixing anything.
+
+That paragraph is the reason to trust the table above it.
+
+### On the sibling project
+
+AgentTape and [AgentLab](https://github.com/renrenmimi/AgentLab) each keep their
+own driver. Two repositories cannot share a file without a dependency or a
+submodule and neither is worth it for two hundred lines. What they share is the
+shape and the contract — `CHROME_PATH` or the usual names on `PATH`, an explicit
+port, a non-zero exit, totals asserted rather than eyeballed — which is all the
+sharing that was ever actually needed.
 
 ## Privacy
 
@@ -517,23 +564,14 @@ its total and its skip count, and a skip appearing where the mode does not
 declare one is a failure: a suite that behaves differently depending on what
 happens to be running on the machine cannot gate anything.
 
-**CI does not run the in-page suite, and it has already cost something.**
-`node verify.mjs` and a production build run on every push; the browser
-assertions at `?selftest=1` need a browser driving a running server, and are
-run by hand. A green tick does not cover them — and at the time of writing
-**eighteen of the 159 in-page assertions are failing on `main`**, and have been
-since the end of round four, with every CI run green throughout.
-
-The features themselves work: driven by hand, the shortcut sheet opens, the
-demo's compaction is marked, and a run compares clean against itself. What is
-broken is the harness's teardown between blocks — a block that loads a
-four-step synthetic tape restores the demo by awaiting a callback captured at
-first render, which does not mean React has re-rendered with the result, so the
-next block asserts against whatever was left loaded. Making that reset explicit
-and asserted was tried and made the count worse (139/161), so it is written down
-here rather than half-fixed. Two genuine bugs were found underneath it — both
-keyboard handlers threw an uncaught `TypeError` on a programmatic key press —
-and those are fixed, with `verify.mjs` now refusing the cast that caused them.
+**The in-page suite covers what a browser can see, and nothing else.** It runs
+in CI now, and what it asserts is the DOM: that a tick was painted, that a word
+appears, that focus moved, that the messages panel stayed virtualised. It cannot
+tell you whether the timeline is *legible*, whether the attribution line reads
+as an explanation, or whether the comparison's caveat is understood. Four of its
+168 assertions need the local helper and are marked *not run here* on a runner —
+counted in the denominator, outside the pass count, so their absence is visible
+rather than assumed.
 
 **Deployment loses the helper and nothing else.** AgentTape is prepared for
 deployment and is not deployed. On a host that is not localhost the page never
