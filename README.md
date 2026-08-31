@@ -81,9 +81,10 @@ Not sure yet? Press **Load demo tape** on the empty state. It is a fictional
 run, invented end to end, with two tool failures, a context blow-up and a
 38-minute idle gap in it.
 
-Putting it on a host is prepared for and not done —
-[`docs/deploying.md`](docs/deploying.md) has the settings, and the measured list
-of what a deployed build loses (the helper, and nothing else).
+It is also live at **<https://agenttape.vercel.app>** — drag a transcript onto
+that page and it is parsed in your browser, exactly as it is locally.
+[`docs/deploy.md`](docs/deploy.md) has the steps that produced it and the
+measured list of what a deployed build loses (the helper, and nothing else).
 
 ### Checking a run from the command line
 
@@ -348,7 +349,7 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 629 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `node verify.mjs` | 634 assertions over the parser, the redactor, the checker and this repository's own guarantees |
 | `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
 | `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
@@ -573,14 +574,14 @@ as an explanation, or whether the comparison's caveat is understood. Four of its
 counted in the denominator, outside the pass count, so their absence is visible
 rather than assumed.
 
-**Deployment loses the helper and nothing else.** AgentTape is prepared for
-deployment and is not deployed. On a host that is not localhost the page never
+**Deployment loses the helper and nothing else.** AgentTape is deployed at
+<https://agenttape.vercel.app>. On a host that is not localhost the page never
 attempts a `127.0.0.1` request at all, so the session list, opening a session by
 row, and the helper-walked overview are gone; drag-and-drop, the demo, the
 workbench, the filter, the comparison, the assertions, the redacted export, the
 report and `/format` all work, as does the folder-granted overview. Measured
 against a production build served from a non-localhost origin, where the only
-host contacted was the origin itself. [`docs/deploying.md`](docs/deploying.md)
+host contacted was the origin itself. [`docs/deploy.md`](docs/deploy.md)
 has the settings and the numbers.
 
 **The format reference is generated from one file.** `/format` renders
