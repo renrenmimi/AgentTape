@@ -79,6 +79,95 @@ subtract the gaps.
 
 ---
 
+## What a session is, on disk
+
+The word *session* means two different things depending on who says it, and the
+ambiguity costs an afternoon if you meet it while writing a parser.
+
+In the application, a session is the workspace you get when you pick a working
+directory, and you start several conversations inside it. In the files,
+`sessionId` is per **conversation**. The two do not line up.
+
+```
+~/.claude/projects/
+  -Users-you-code-app/           one directory per working directory
+    <sessionId>.jsonl            one file per conversation
+    <sessionId>/                 that conversation's sidecars
+      subagents/                 one pair of files per delegated run
+      tool-results/              tool output too large to inline
+    memory/                      persists across every conversation here
+```
+
+The directory appears the first time you work somewhere, not the first time you
+start a conversation. The machine behind these notes has 28 directories holding
+42 conversations, nine of them in one directory.
+
+`memory/` sits beside the transcripts rather than inside any one of them,
+because it outlives them: it is what a later conversation in the same directory
+reads before it starts. It is written by the assistant, in prose, about the
+person it is working for. **Treat it as content.**
+
+### One conversation can be written by two clients
+
+Every record carries `entrypoint`, naming the client that produced it.
+
+| `entrypoint` | client |
+| --- | --- |
+| `cli` | the terminal command |
+| `claude-vscode` | the VS Code and JetBrains extension |
+| `claude-desktop` | the desktop application |
+
+It is per **record**, not per file, and the difference is not a formality.
+Continuing a conversation from a different client appends to the same file, so
+one transcript can carry two values. Five of the forty-two files here do, every
+one of them `claude-desktop` first and `claude-vscode` second — in one case six
+hours apart on the same day, with `version` bumping across the boundary because
+the user had updated in between.
+
+A parser that reads `entrypoint` once and labels the whole file with it is wrong
+on roughly one file in eight.
+
+### `sessionId` is not constant within a file either
+
+Resuming mints a new `sessionId`, and the records already written keep the old
+one. The file is named after the later id, so **the filename does not match the
+`sessionId` on every line inside it.** Two files here change partway through; in
+one, the first 619 lines carry an id that appears nowhere in the filename.
+
+Key a conversation by its filename. Keying by `sessionId` splits one
+conversation in two, and the split lands wherever the user happened to close
+their laptop.
+
+### `tool-results/`
+
+When a tool returns more than the transcript will carry inline, the output goes
+to `tool-results/<id>.txt` and the record keeps a reference instead of the
+content. One session here has sixteen, between 30 and 51 KB each.
+
+They are plain text and hold whatever the tool returned: file contents, command
+output, a long document. **Assume they contain source code**, because that is
+usually what they are.
+
+A tape built from the `.jsonl` alone does not have them. Whether that matters
+depends on what you are building — a viewer can show the reference, an audit
+cannot.
+
+### Deleting a conversation does not delete the file
+
+Deleting in the desktop application writes a sidecar next to the transcript:
+
+```
+<sessionId>.desktop-released.json
+{ "v": 1, "releasedAt": "2026-09-01T00:39:27.821Z", "reason": "delete" }
+```
+
+Seventy-eight bytes. The transcript, its subagent runs and its tool results all
+remain byte for byte. If you are indexing a corpus, this marker is the only
+signal that someone meant to be rid of a conversation, and honouring it is the
+respectful default rather than an optional nicety.
+
+---
+
 ## Record types
 
 One JSON object per line, UTF-8, appended in write order. Eleven `type` values

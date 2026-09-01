@@ -159,8 +159,9 @@ export default function EmptyState({
 
         <p className="lede-cta lede-read">
           No transcript to hand? <a href="/format">Read what a Claude Code transcript actually
-          is</a> — the file format, and the four things about it that are not what you would
-          guess. Nobody else appears to have written it down.
+          is</a> — where the files sit on disk, what a session maps to, and the four things
+          about the format that are not what you would guess. Nobody else appears to have
+          written it down.
         </p>
 
         <div className="privacy">
