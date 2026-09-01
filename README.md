@@ -8,6 +8,10 @@ transcript already sitting in `~/.claude/projects/` and shows you the messages
 array as it grew, the one step that blew up the context, the tool that failed
 and the forty minutes where nothing happened at all.
 
+![A replayed session: the counters, the timeline, and the context growth with the step that caused it](docs/replay.jpg)
+
+*The built-in demo tape. Along the top: 31 steps, 20 turns, 43m 33s of wall clock against 1m 21s of activity, 9 tool calls, 2 errors. The band underneath is the context, and it names the step that caused the jump — +79k at step 12, dropped at the compaction thirteen steps later, but re-sent three turns first, which cost 236k of re-reading.*
+
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
 `~/.claude/projects/` and parses it entirely in your browser: there is no
 upload, no account, and no backend that receives transcript content. The only
