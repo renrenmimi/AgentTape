@@ -1351,6 +1351,15 @@ for (const [what, re] of [
   ["how subagents link to their parent", /only link to the parent/i],
   ["the four failure signals", /Failure is four different signals/i],
   ["what it does not know", /What this document does not know/i],
+  ["what a session is on disk", /What a session is, on disk/i],
+  ["that a folder is per working directory, not per conversation", /one directory per working directory/i],
+  ["what entrypoint is", /`entrypoint`, naming the client/i],
+  ["that one file can carry two clients", /can carry two values/i],
+  ["that sessionId changes on resume", /Resuming mints a new `sessionId`/i],
+  ["that the filename, not sessionId, keys a conversation", /Key a conversation by its filename/i],
+  ["what tool-results holds", /tool-results\/<id>\.txt/],
+  ["that deleting leaves the transcript in place", /desktop-released\.json/],
+  ["what memory/ is", /memory\/` sits beside the transcripts/],
 ]) {
   ok(re.test(fmt), "the format reference states: " + what);
 }
@@ -1377,9 +1386,18 @@ ok(!/marked|markdown-it|remark|micromark|mdx/i.test(JSON.stringify(pkg)),
   ok(h2.length >= 10, "…and a contents list from its sections", String(h2.length));
   ok(new Set(h2.map((h) => h.slug)).size === h2.length, "…whose anchors are unique");
 
-  const table = blocks.find((b) => b.b === "table");
+  const tables = blocks.filter((b) => b.b === "table");
+  // Picking the first table couples this to where a section happens to sit in
+  // the document; a new section above the old one moved it and the assertion
+  // failed on a table it was never about. Take the largest, and require every
+  // table to be structurally whole rather than only the one we sampled.
+  const table = tables.reduce((a, b) =>
+    b.head.length * b.rows.length > a.head.length * a.rows.length ? b : a);
   ok(table.head.length >= 3 && table.rows.length >= 5, "a table keeps its head and its rows",
     `${table.head.length} columns, ${table.rows.length} rows`);
+  ok(tables.every((t) => t.head.length >= 2 && t.rows.length >= 1),
+    "…and every table in the reference has a head and at least one row",
+    `${tables.length} tables`);
   const code = blocks.filter((b) => b.b === "code");
   ok(code.every((c) => !c.text.includes("```")), "a fence never leaks into its own body");
 
@@ -2528,7 +2546,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 646;
+const EXPECTED_CHECKS = 656;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
