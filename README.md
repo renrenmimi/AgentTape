@@ -10,7 +10,7 @@ and the forty minutes where nothing happened at all.
 
 ![A replayed session: the step list, and the failed tool result with the call it answers](docs/replay.jpg)
 
-*The built-in demo tape, at the first failed tool call. The list on the left says what every step is; the panel shows the result that failed, the call it answers, and how long that call took. The overview this arrived from is one click away, and so is the context view that explains the +79k jump at step 12.*
+*The built-in demo tape, at the first failed tool call. The list on the left says what every step is; the panel shows the result that failed, the call it answers, and how long that call took. Above them the rail is quiet grey texture with the events picked out — two red failures, an amber compaction, the accent dot of a delegated run — and the blue line is where you are.*
 
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
 `~/.claude/projects/` and parses it entirely in your browser: there is no
