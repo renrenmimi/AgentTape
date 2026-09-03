@@ -41,7 +41,7 @@ The helper, and only the helper. The page talks to `127.0.0.1:4319` **only when
 it is itself being served from localhost**, so on any other origin the helper
 does not exist and neither does anything it feeds:
 
-* the list of recent sessions on the empty state,
+* the list of recent sessions in **All sessions**,
 * opening a session by clicking a row,
 * the cross-session overview built by walking `~/.claude/projects`.
 
@@ -60,9 +60,9 @@ is meant to run in somebody else's CI.
 ## What still works, measured on the deployment
 
 Everything that does not need a filesystem: drag and drop, the demo tape, the
-timeline, the messages array, the filter, the comparison, the assertions panel,
-the redacted export, the Markdown report, and `/format` — which returned 200
-with all twelve of its sections.
+overview, the step list, the context view, the record data, the messages array,
+the filter, the comparison, the checks panel, the redacted export, the Markdown
+summary, and `/format` — which returned 200 with all twelve of its sections.
 
 Including the cross-session overview, the browser one, where you grant a folder
 rather than the helper walking it:
