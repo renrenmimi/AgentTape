@@ -75,8 +75,10 @@ Structure only. The helper never reads or prints a session title — titles are
 generated from your prompts, so they leak exactly what this project exists to
 protect.
 
-**All sessions** has a **Look for it** button rather than probing for the helper
-on every load: a refused connection to a port nothing is listening on is logged
+**All sessions** leads with **Choose a folder**, which works in any browser
+that can grant one. The helper is the second route, behind **Run locally for
+the helper**, and it has a **Look for it** button rather than probing on every
+load: a refused connection to a port nothing is listening on is logged
 in red by the browser before any JavaScript can catch it, and a working page
 that prints a red error looks broken. Once the helper has answered here, the
 page remembers and finds it on its own. Away from localhost that route says so
@@ -138,6 +140,23 @@ rule reference is [`docs/rules.md`](docs/rules.md).
 
 Three views over one session, and you arrive at the first of them whichever way
 you came in.
+
+### The frame
+
+Two rows, and they are two different scopes. The bar holds what is true with or
+without a session open — **Open session**, **All sessions**, and one **More**
+menu with the keyboard shortcuts, the format reference, the theme and closing
+the session in it. The row under it holds what is about *this* session: which
+view you are in, whether it meets its **Checks**, and **Export**.
+
+That split is why the bar does not crowd. Seven controls used to share one row,
+four of them dropdowns, and at 1150px the session's own name was squeezed to
+seventy-five pixels to make room for them. Below 720px both rows fold into the
+one menu, in a single step — nothing disappears at 1024 any more.
+
+The session name is a button, because it is truncated and a truncated name has
+to be recoverable by hover *and* by focus; a `title` attribute covers the mouse
+and nothing else. Activating it goes to the overview.
 
 ### Overview — what happened, and where to look
 
@@ -337,8 +356,8 @@ happen.
 ## Every session at once
 
 **All sessions** is a table of the sessions from a folder you grant this page
-access to, or from the local helper: steps, tool failures and active time by
-default, with tool calls, wall clock, peak context, compactions, delegations,
+access to, or from the local helper: session, last written, steps, tool
+failures and active time by default, with tool calls, wall clock, peak context, compactions, delegations,
 size and a context sparkline available from a **Columns** control or by
 expanding a row. Sparklines share one vertical scale, so the session that grew
 the most context is the tallest line. Click through to open one; the session you

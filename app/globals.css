@@ -1453,7 +1453,10 @@ th.num .ov-sort { flex-direction: row-reverse; }
 
 /* ---------- compare ------------------------------------------------------- */
 
-.cmp-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+/* Each card its own height. Stretching them to match left run A with a third
+   of a card of nothing under it, which reads as an unfinished panel rather
+   than as a tidy grid. */
+.cmp-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
 .cmp-source {
   padding: 20px;
   background: var(--bg-surface);
