@@ -120,16 +120,17 @@ const CASES = [
     // assertion whose regex says `const ok = ` — the per-line method drops it,
     // the character-level one counts it, and they have to notice.
     mutate: (dir) => edit(dir, "app/selftest.ts", (s) =>
-      s.replace('  await home();\n  await keyMoves("ArrowRight");',
-        '  ok(/const ok = "x"/.test("y") === false, "a plant with a regex in it");\n' +
-        '  await home();\n  await keyMoves("ArrowRight");')),
+      s.replace('    await home();\n    await keyMoves("ArrowRight");',
+        '    ok(/const ok = "x"/.test("y") === false, "a plant with a regex in it");\n' +
+        '    await home();\n    await keyMoves("ArrowRight");')),
     expect: /agree about where they are/,
   },
   {
     name: "the in-page suite gains an assertion without updating its total",
     why: "the static counter should notice a call site the declaration does not",
     mutate: (dir) => edit(dir, "app/selftest.ts", (s) =>
-      s.replace('  ok(nodes < 3000,', '  ok(1 === 1, "an assertion nobody declared");\n  ok(nodes < 3000,')),
+      s.replace('    ok(nodes < 4000,',
+        '    ok(1 === 1, "an assertion nobody declared");\n    ok(nodes < 4000,')),
     expect: /the source contains exactly that many/,
   },
 ];

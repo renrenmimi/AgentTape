@@ -962,7 +962,10 @@ th.num .ov-sort { flex-direction: row-reverse; }
 }
 .entry-now { border-color: var(--focus-ring); background: var(--bg-selected); }
 .entry-err { border-left: 2px solid var(--error-text); }
-.entry-miss { opacity: 1; background: var(--bg-subtle); }
+.entry-hit { border-color: var(--focus-ring); }
+/* Not `opacity`. A non-matching entry is still readable — it is out of the
+   filter, not out of the record. */
+.entry-miss { background: var(--bg-subtle); }
 .entry-head {
   display: flex;
   flex-direction: column;
@@ -1536,3 +1539,6 @@ th.num .ov-sort { flex-direction: row-reverse; }
   .doc-body { grid-template-columns: 1fr; gap: 24px; }
   .doc-toc { position: static; }
 }
+
+/* The list is the tab stop; `aria-activedescendant` names the current row. */
+.step-list:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }

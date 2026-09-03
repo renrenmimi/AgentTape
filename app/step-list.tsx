@@ -93,6 +93,10 @@ export default function StepList({
     return [first, last];
   }, [scrollTop, viewH, n]);
 
+  // The container is the tab stop and `aria-activedescendant` says which row
+  // is current — rather than a roving tabindex over six thousand rows, which
+  // would put the focused row's identity in the DOM and lose it every time the
+  // list virtualised it away.
   const onKeyDown = (e: React.KeyboardEvent) => {
     let next = pos;
     if (e.key === "ArrowDown" || e.key === "ArrowRight") next = pos + (e.shiftKey ? 10 : 1);
@@ -127,7 +131,6 @@ export default function StepList({
         id={`step-opt-${s.i}`}
         role="option"
         aria-selected={on}
-        tabIndex={on ? 0 : -1}
         className={cls}
         style={{ top: k * ROW, height: ROW }}
         onClick={() => onPos(k)}
@@ -162,6 +165,7 @@ export default function StepList({
       ref={scroller}
       onScroll={onScroll}
       role="listbox"
+      tabIndex={0}
       aria-label="Steps in this session"
       aria-activedescendant={cur ? `step-opt-${cur.i}` : undefined}
       onKeyDown={onKeyDown}

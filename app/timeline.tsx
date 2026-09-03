@@ -193,11 +193,15 @@ export default function Timeline({
     const grid = cssVar("--chart-grid") || "#dde4ee";
     const accent = cssVar("--text-accent") || "#2f52b0";
 
+    // The baseline sits under the glyphs rather than through them. Through
+    // them it is a line across every column of the rail, which is both uglier
+    // and — since the self-test counts painted ticks by reading the pixels
+    // back — a continuous smear that makes every column look occupied.
     g.strokeStyle = grid;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(PAD, RAIL_Y + 0.5);
-    g.lineTo(w - PAD, RAIL_Y + 0.5);
+    g.moveTo(PAD, TRACK_H - 3.5);
+    g.lineTo(w - PAD, TRACK_H - 3.5);
     g.stroke();
 
     const spacing = (w - PAD * 2) / Math.max(1, n);

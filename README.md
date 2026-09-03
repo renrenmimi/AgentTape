@@ -353,12 +353,12 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 656 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `node verify.mjs` | 684 assertions over the parser, the redactor, the checker and this repository's own guarantees |
 | `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
-| `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
+| `npm run selftest` | the in-page suite, 338 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
 
-The in-page job asserts three numbers, not one — `164/168 passed · 0 failed ·
+The in-page job asserts three numbers, not one — `334/338 passed · 0 failed ·
 4 not run here` — and that it ran in the mode it asked for. Any of those moving
 is a red build. It takes about fourteen seconds on a runner.
 
@@ -580,7 +580,7 @@ in CI now, and what it asserts is the DOM: that a tick was painted, that a word
 appears, that focus moved, that the messages panel stayed virtualised. It cannot
 tell you whether the timeline is *legible*, whether the attribution line reads
 as an explanation, or whether the comparison's caveat is understood. Four of its
-168 assertions need the local helper and are marked *not run here* on a runner —
+338 assertions need the local helper and are marked *not run here* on a runner —
 counted in the denominator, outside the pass count, so their absence is visible
 rather than assumed.
 

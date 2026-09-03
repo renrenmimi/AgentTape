@@ -77,6 +77,14 @@ export default function Shell({
   // words in it. Nothing moves into a menu that is not also reachable from the
   // view it belongs to — Checks and Export are session-level actions and the
   // overview links to both.
+  const wideItems: MenuItem[] = sessionLabel
+    ? [{
+      label: "Close session",
+      note: "returns to the start; the file is not touched",
+      onSelect: onCloseSession,
+    }]
+    : [{ label: "Supported format", onSelect: onFormat }];
+
   const narrowItems: MenuItem[] = [
     { label: "All sessions", onSelect: onSessions },
     ...(checks ? [{ label: `Checks — ${checksWord(checks)}`, onSelect: onChecks }] : []),
@@ -147,6 +155,14 @@ export default function Shell({
           <Menu label="Theme" icon={<ThemeIcon />} items={themeItems} look="quiet" />
         </span>
 
+        {/* Two menus, one visible at a time, chosen by the stylesheet rather
+            than by measuring the window — measuring means the server and the
+            first client render can disagree, and the fix for that is always a
+            flash. The wide one holds the single action that has no room for a
+            button of its own; the narrow one holds everything the bar drops. */}
+        <span className="bar-wide">
+          <Menu label="More" items={wideItems} look="quiet" />
+        </span>
         <span className="bar-narrow">
           <Menu label="More" items={narrowItems} look="quiet" />
         </span>

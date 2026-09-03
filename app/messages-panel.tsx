@@ -155,7 +155,7 @@ export default function MessagesPanel({
       "entry",
       e.err ? "entry-err" : "",
       isCur ? "entry-now" : "",
-      hit === false ? "entry-miss" : "",
+      hit === true ? "entry-hit" : hit === false ? "entry-miss" : "",
     ].join(" ");
     const first = steps[e.from];
     const label = first ? first.preview : "";
