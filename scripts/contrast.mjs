@@ -104,6 +104,7 @@ export const PAIRS = [
   ["text-primary", "bg-surface", "text", "body text on a surface"],
   ["text-primary", "bg-subtle", "text", "body text on a subtle panel"],
   ["text-primary", "bg-selected", "text", "the selected step's label"],
+  ["text-secondary", "bg-hover", "text", "a hovered row's summary"],
   ["text-primary", "bg-hover", "text", "a hovered row's label"],
   ["text-secondary", "bg-page", "text", "secondary text on the page"],
   ["text-secondary", "bg-surface", "text", "secondary text on a surface"],
@@ -115,6 +116,7 @@ export const PAIRS = [
   ["text-accent", "bg-surface", "text", "a link"],
   ["text-accent", "bg-page", "text", "a link on the page"],
   ["text-accent", "bg-selected", "text", "the selected tab's label"],
+  ["text-accent", "bg-subtle", "text", "a link on a subtle panel"],
 
   // the primary action
   ["action-text", "action-bg", "text", "the primary button"],
@@ -144,17 +146,49 @@ export const PAIRS = [
   ["focus-ring", "bg-surface", "ui", "the focus ring"],
   ["focus-ring", "bg-page", "ui", "…on the page"],
   ["focus-ring", "bg-selected", "ui", "…on the selected row"],
+  ["focus-ring", "bg-subtle", "ui", "…on a subtle panel"],
   ["action-bg", "bg-surface", "ui", "the primary button against the page"],
+
+  // The brand accent. A 3:1 role everywhere it appears: it fills, it marks,
+  // it draws a rail. Where it has to carry a word, `text-accent` does instead.
+  ["accent", "bg-surface", "ui", "the accent as a mark"],
+  ["accent", "bg-page", "ui", "…on the page"],
+  ["accent-hover", "bg-surface", "ui", "…hovered"],
+
   ["chart-line", "bg-surface", "ui", "the context line"],
-  ["chart-tick", "bg-surface", "ui", "a step tick"],
-  ["chart-tick-tool", "bg-surface", "ui", "a tool-call tick"],
+  ["chart-step", "bg-surface", "decor", "an ordinary step on the rail — texture, not information"],
+  ["chart-tool", "bg-surface", "ui", "a tool call on the rail"],
   ["chart-fail", "bg-surface", "ui", "a failure mark"],
   ["chart-warn", "bg-surface", "ui", "a compaction mark"],
+  ["chart-selected", "bg-surface", "ui", "the current-step marker"],
   ["chart-axis-text", "bg-surface", "text", "an axis label"],
-  ["chart-selected", "bg-surface", "ui", "the selected point"],
 ];
 
-const NEED = { text: 4.5, ui: 3 };
+/**
+ * "decor" is the one category held below 3:1, and it exists for exactly two
+ * marks: the ordinary-step texture on the position rail.
+ *
+ * WCAG 1.4.11 covers graphical objects "required to understand the content".
+ * An ordinary step's tick is not one: which step it is, what kind it is and
+ * whether it failed are all in the step list beside the rail and in the
+ * slider's own `aria-valuetext`, and deleting every ordinary tick would cost
+ * the reader nothing but the sense of how dense the run is. The events *are*
+ * information — failure, compaction, delegation, the current step — and every
+ * one of those is held to 3:1 above.
+ *
+ * The bar is 1.8:1, which is enough to be visible at all, and verify.mjs
+ * asserts that no pair outside this list is filed under it — so the category
+ * cannot quietly grow into a way of shipping an invisible control.
+ */
+const DECOR_ALLOWED = new Set(["chart-step/bg-surface", "chart-step/bg-page"]);
+
+const NEED = { text: 4.5, ui: 3, decor: 1.8 };
+
+/** Which pairs are filed as decorative, so verify.mjs can hold the list shut. */
+export const decorPairs = () =>
+  PAIRS.filter(([, , kind]) => kind === "decor").map(([fg, bg]) => `${fg}/${bg}`);
+
+export const decorAllowed = () => [...DECOR_ALLOWED];
 
 export function checkContrast() {
   const themes = readTokens();

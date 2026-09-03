@@ -22,7 +22,10 @@ import {
   fmtBytes, fmtDate, fmtDuration, fmtInt, fmtTokens, type Summary,
 } from "@/lib/summary";
 import type { KeyEvent, RecordNote } from "@/lib/events";
-import { CrossIcon, InfoIcon, NextIcon, WarnIcon } from "./icons";
+import {
+  BranchIcon, ClockIcon, CompressIcon, CrossIcon, NextIcon, RiseIcon, WarnIcon,
+} from "./icons";
+import type { EventKind } from "@/lib/events";
 
 type Props = {
   tape: Tape;
@@ -67,11 +70,22 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-const EVENT_ICON = {
-  error: <CrossIcon size={18} />,
-  warning: <WarnIcon size={18} />,
-  info: <InfoIcon size={18} />,
-} as const;
+/**
+ * Colour says how much it matters; the icon says what kind of thing it is.
+ *
+ * Six kinds and six hues would be the colour wall this list is deliberately
+ * not, so the tones are four and the silhouettes are six — and every row also
+ * says which it is in words, which is the only one of the three a reader is
+ * required to use.
+ */
+const EVENT_ICON: Record<EventKind, React.ReactNode> = {
+  "tool-failure": <CrossIcon size={18} />,
+  "unanswered-call": <WarnIcon size={18} />,
+  "context-jump": <RiseIcon size={18} />,
+  "compaction": <CompressIcon size={18} />,
+  "delegation": <BranchIcon size={18} />,
+  "idle-gap": <ClockIcon size={18} />,
+};
 
 export default function SessionOverview({
   tape, summary, events, allEvents, notes, facts, sourceLabel, shownIndex, atStep, visited,
@@ -162,7 +176,7 @@ export default function SessionOverview({
               <ul className="event-list">
                 {rows.map((e) => (
                   <li className={"event event-" + e.tone} key={e.kind + ":" + e.step}>
-                    <span className="event-icon" aria-hidden>{EVENT_ICON[e.tone]}</span>
+                    <span className="event-icon" aria-hidden>{EVENT_ICON[e.kind]}</span>
                     <span className="event-body">
                       <span className="event-title">{e.title}</span>
                       <span className="event-detail">

@@ -88,7 +88,7 @@ jobs:
           exit 1
 
       # The contract is three numbers, not one. Any of them moving is red:
-      # 371 declared, 4 skipped, 0 failed — and therefore 367 passed.
+      # 407 declared, 4 skipped, 0 failed — and therefore 403 passed.
       - name: the in-page suite, no-helper mode
         env:
           SELFTEST_TIMEOUT: "180000"
@@ -97,7 +97,7 @@ jobs:
           node scripts/selftest.mjs http://127.0.0.1:3000/ | tee /tmp/selftest.txt
           grep -qF "[no-helper]" /tmp/selftest.txt \
             || { echo "::error::the suite did not report no-helper mode"; exit 1; }
-          grep -qF "367/371 passed · 0 failed · 4 not run here · 371 declared, 4 skips declared" /tmp/selftest.txt \
+          grep -qF "403/407 passed · 0 failed · 4 not run here · 407 declared, 4 skips declared" /tmp/selftest.txt \
             || { echo "::error::the declared totals moved"; exit 1; }
           echo "wall time: $(grep -o '[0-9.]*s$' /tmp/selftest.txt | tail -1)"
 

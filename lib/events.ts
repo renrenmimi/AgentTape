@@ -41,8 +41,15 @@ export type KeyEvent = {
   detail: string;
   /** Where the evidence for this event lives. */
   target: EventTarget;
-  /** Tone, so the row is not colour-only: the title says the same thing. */
-  tone: "error" | "warning" | "info";
+  /**
+   * Severity, and only severity.
+   *
+   * Six kinds and six hues would make this list the colour wall it is
+   * deliberately not. Colour says how much it matters; the icon beside it says
+   * what kind of thing it is, and the title says both in words. Four tones,
+   * six silhouettes.
+   */
+  tone: "error" | "warning" | "info" | "neutral";
 };
 
 /**
@@ -146,7 +153,7 @@ export function keyEvents(tape: Tape, summary: Summary, pairs: Map<number, numbe
       title: `Longest gap between records · ${fmtDuration(summary.longestGapMs)}`,
       detail: "nothing was written to the transcript across this gap",
       target: "context",
-      tone: "info",
+      tone: "neutral",
     });
   }
 
@@ -244,22 +251,36 @@ export function recordNotes(
 /**
  * One factual line about the run, built from counts and nothing else.
  *
- * No fixed demo numbers, no adjectives, and no conclusion about whether the
- * work went well — every clause is a figure the index produced.
+ * It used to read "31 steps · 9 tool calls · 2 tool failures", which is the
+ * three figures directly above it, in words. A caption that restates the thing
+ * it captions is furniture. This carries what the figures cannot: how long,
+ * how much of that was work, how many messages the array ended up with, and
+ * the structural events that have no number of their own.
+ *
+ * No adjectives and no conclusion about whether the work went well — every
+ * clause is a figure the index produced.
  */
 export function factLine(summary: Summary): string {
-  const parts = [
-    `${fmtInt(summary.conversationSteps)} step${summary.conversationSteps === 1 ? "" : "s"}`,
-    `${fmtInt(summary.toolCalls)} tool call${summary.toolCalls === 1 ? "" : "s"}`,
-  ];
-  parts.push(
-    summary.errors === 0
-      ? "no failed tool calls recorded"
-      : `${fmtInt(summary.errors)} tool failure${summary.errors === 1 ? "" : "s"}`,
-  );
+  const parts: string[] = [];
+
+  parts.push(`${fmtInt(summary.turns)} message${summary.turns === 1 ? "" : "s"} in the array`);
+
+  if (summary.wallMs > 0) {
+    parts.push(
+      summary.activeMs > 0 && summary.activeMs < summary.wallMs
+        ? `${fmtDuration(summary.wallMs)} wall clock, ${fmtDuration(summary.activeMs)} active`
+        : `${fmtDuration(summary.wallMs)} wall clock`,
+    );
+  }
+
   if (summary.compactAt.length) {
     parts.push(`${fmtInt(summary.compactAt.length)} compaction` +
       (summary.compactAt.length === 1 ? "" : "s"));
   }
+
+  if (summary.peakCtx > 0) parts.push(`${fmtTokens(summary.peakCtx)} peak context`);
+  if (summary.models.length === 1) parts.push(summary.models[0]);
+  else if (summary.models.length > 1) parts.push(`${fmtInt(summary.models.length)} models`);
+
   return parts.join(" · ");
 }

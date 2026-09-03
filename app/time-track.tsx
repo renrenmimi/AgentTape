@@ -23,7 +23,7 @@ export const TIME_H = 44;
 const AXIS_Y = 22;
 
 const NAMES = [
-  "--chart-tick", "--chart-fail", "--chart-grid", "--chart-idle",
+  "--chart-step", "--chart-fail", "--chart-grid", "--chart-idle",
   "--chart-axis-text", "--chart-selected", "--font-mono",
 ];
 type Palette = Record<string, string>;
@@ -87,7 +87,7 @@ export default function TimeTrack({ steps, pos, onPos }: Props) {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
 
-    const tick = cssVar("--chart-tick") || "#6b7686";
+    const tick = cssVar("--chart-step") || "#97a1b2";
     const risk = cssVar("--chart-fail") || "#b42318";
     const grid = cssVar("--chart-grid") || "#dde4ee";
     const idle = cssVar("--chart-idle") || "rgba(24,33,47,.06)";

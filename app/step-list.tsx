@@ -18,7 +18,7 @@
 // rather than measured because a measure-then-reflow pass on a list this long
 // is the thing that makes scrolling stutter.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Step } from "@/lib/format";
 import { stepLabel } from "@/lib/labels";
 import { fmtInt } from "@/lib/summary";
@@ -42,10 +42,20 @@ type Props = {
   toolOf: (globalIndex: number) => string;
   /** Bumped by the owner to ask the list to scroll the selection into view. */
   revealKey: number;
+  /**
+   * Where the list was scrolled to, held by the owner.
+   *
+   * Replay unmounts when another view is shown, so anything the list keeps to
+   * itself is gone by the time you come back — and coming back to the top of a
+   * six-thousand-row list you had scrolled halfway down is the whole reason
+   * people stop trusting a back button.
+   */
+  scrollTop: number;
+  onScrollTop: (y: number) => void;
 };
 
 export default function StepList({
-  steps, pos, onPos, mask, delegated, shownIndex, toolOf, revealKey,
+  steps, pos, onPos, mask, delegated, shownIndex, toolOf, revealKey, scrollTop: saved, onScrollTop,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -67,8 +77,33 @@ export default function StepList({
     raf.current = requestAnimationFrame(() => {
       raf.current = 0;
       const el = scroller.current;
-      if (el) setScrollTop(el.scrollTop);
+      if (!el) return;
+      setScrollTop(el.scrollTop);
+      onScrollTop(el.scrollTop);
     });
+  }, [onScrollTop]);
+
+  /**
+   * Where this list was when it mounted, and whether it was restored.
+   *
+   * Restoring a saved position is a decision. The reveal below is a correction
+   * for a selection that has moved out of sight — and it runs again whenever
+   * the viewport is measured, which happens twice on mount. Left to itself it
+   * overrode the restore a frame later, so the two are told apart: until the
+   * selection or an explicit reveal actually changes, a restored list stays
+   * where it was put.
+   */
+  const restored = useRef(false);
+  const mountedAt = useRef({ pos, revealKey });
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !saved) return;
+    el.scrollTop = saved;
+    setScrollTop(saved);
+    restored.current = true;
+    // Mount only: after that the list owns its own position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
@@ -77,6 +112,10 @@ export default function StepList({
   // when the row is actually outside, and land it a third of the way down so
   // the steps before it stay in shot.
   useEffect(() => {
+    if (restored.current
+      && pos === mountedAt.current.pos
+      && revealKey === mountedAt.current.revealKey) return;
+    restored.current = false;
     const el = scroller.current;
     if (!el || pos < 0 || pos >= n) return;
     const top = pos * ROW;
@@ -85,6 +124,12 @@ export default function StepList({
     const want = Math.max(0, Math.min(n * ROW - h, top - h * 0.33));
     el.scrollTop = want;
     setScrollTop(want);
+    onScrollTop(want);
+    // `onScrollTop` is deliberately not a dependency. It is a sink, not a
+    // trigger, and an unstable one re-ran this effect on every render — which
+    // meant a list restored to where you left it was scrolled back to the
+    // selection a frame later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, n, viewH, revealKey]);
 
   const [from, to] = useMemo(() => {

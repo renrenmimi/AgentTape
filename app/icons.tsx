@@ -75,22 +75,23 @@ export const ChecksIcon = ({ size = 16 }: P) => (
     <path d="M9.6 4.2h4" /><path d="M9.6 10.8h4" /></svg>
 );
 
-export const HelpIcon = ({ size = 16 }: P) => (
-  <svg {...box(size)}><circle cx="8" cy="8" r="6.2" />
-    <path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.3" /><path d="M8 11.6h.01" /></svg>
-);
-
-export const ThemeIcon = ({ size = 16 }: P) => (
-  <svg {...box(size)}><circle cx="8" cy="8" r="3.4" /><path d="M8 1.4v1.6M8 13v1.6M1.4 8h1.6M13 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" /></svg>
-);
-
 export const BackIcon = ({ size = 16 }: P) => (
   <svg {...box(size)}><path d="M13.2 8H3.2" /><path d="M7 3.8L2.8 8 7 12.2" /></svg>
 );
 
-export const CompareIcon = ({ size = 16 }: P) => (
-  <svg {...box(size)}><path d="M4.4 2.6v10.8" /><path d="M11.6 2.6v10.8" />
-    <path d="M1.6 5.4h5.6" /><path d="M8.8 10.6h5.6" /></svg>
+/** Context rising — the shape of the event, not a warning about it. */
+export const RiseIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><path d="M2.4 12.4l3.6-4.2 2.8 2.4 4.8-6" /><path d="M10.4 4.6h3.2v3.2" /></svg>
+);
+
+/** Context compacted: two edges pushed together. */
+export const CompressIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><path d="M2.4 8h11.2" /><path d="M5.6 4.4L8 6.8l2.4-2.4" />
+    <path d="M5.6 11.6L8 9.2l2.4 2.4" /></svg>
+);
+
+export const ClockIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><circle cx="8" cy="8" r="6.2" /><path d="M8 4.6V8l2.4 1.6" /></svg>
 );
 
 export const ListIcon = ({ size = 16 }: P) => (

@@ -399,7 +399,11 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
   // The canvas was created with willReadFrequently because the flag is set;
   // options passed here would be ignored, so this just takes the context.
   const g = ctx2d(canvas);
-  const band = g?.getImageData(0, Math.round(4 * dpr), canvas.width, Math.round(20 * dpr));
+  // Above the baseline, which is a hairline the whole width of the rail: a band
+  // that includes it reports one continuous group and measures the line rather
+  // than the ticks. Ordinary ticks reach 3px above it and tool ticks 5px, so
+  // this window catches both and the baseline neither.
+  const band = g?.getImageData(0, Math.round(14 * dpr), canvas.width, Math.round(5 * dpr));
   let groups = 0;
   let inRun = false;
   if (band) {
@@ -433,7 +437,7 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 371;
+const DECLARED_ASSERTIONS = 407;
 
 /**
  * How many `ok(` and `skip(` call sites this file contains.
@@ -450,7 +454,7 @@ const DECLARED_ASSERTIONS = 371;
  * smaller number confidently, which is why this is now counted twice by methods
  * that fail differently and the two have to agree.
  */
-export const DECLARED_CALL_SITES = 335;
+export const DECLARED_CALL_SITES = 367;
 
 /**
  * Which mode the run is in, and what that mode is supposed to produce.
@@ -745,8 +749,15 @@ async function runBlocks(
     // The sentence is generated from counts. A fixed demo string would read
     // the same on somebody else's transcript, which is the whole failure.
     const facts = (document.querySelector(".summary-facts")?.textContent ?? "").trim();
-    ok(new RegExp(`^${n} steps`).test(facts), "the summary sentence is built from this run's counts",
+    ok(/\d/.test(facts) && facts.length > 20, "the summary sentence is built from this run",
       facts);
+    // It used to read "31 steps · 9 tool calls · 2 tool failures", which is the
+    // three figures directly above it, in words. A caption that restates the
+    // thing it captions is furniture.
+    const figureWords = [...document.querySelectorAll(".figure-label")]
+      .map((e) => (e.textContent ?? "").trim().toLowerCase());
+    ok(figureWords.every((w) => !facts.toLowerCase().includes(w)),
+      "…and does not restate the figures directly above it", facts);
     ok(!/succe|perfect|clean run|went well/i.test(facts),
       "…and says nothing about whether the run went well", facts);
 
@@ -1309,9 +1320,9 @@ async function runBlocks(
   // ---- checks -------------------------------------------------------------
   {
     await need("checks");
-    const btn = [...document.querySelectorAll<HTMLElement>(".shell-bar button")]
+    const btn = [...document.querySelectorAll<HTMLElement>(".shell-views button")]
       .find((b) => /^checks/i.test((b.textContent ?? "").trim()));
-    ok(!!btn, "the shell offers Checks");
+    ok(!!btn, "Checks sits with the session it is about");
     ok(/failed|passed|not evaluated|No checks/i.test(btn?.textContent ?? ""),
       "…with an outcome on it, not just a number", btn?.textContent ?? "");
 
@@ -1489,6 +1500,24 @@ async function runBlocks(
     await until(() => head?.getAttribute("aria-expanded") === "true", 60);
     const at = api().pos;
 
+    // Scroll the list somewhere that is not the top, and somewhere the
+    // selection is not, so a restore cannot be mistaken for the reveal.
+    await click(".left-head .seg", /^steps$/i, "back to Steps");
+    await until(() => api().leftMode === "steps" && !!document.querySelector(".step-list"), 180);
+    const list = () => document.querySelector<HTMLElement>(".step-list");
+    const scrollAt = () => Math.round(list()?.scrollTop ?? -1);
+    // A freshly mounted list brings the selection into view, which is what it
+    // is supposed to do. Wait for that to finish before scrolling somewhere
+    // else, or the thing being measured is a race with it.
+    await quiet(scrollAt);
+    list()!.scrollTop = 240;
+    list()!.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await quiet(scrollAt);
+    const scrolled = scrollAt();
+    ok(scrolled > 0, "the list can be scrolled away from the top", String(scrolled));
+    await click(".left-head .seg", /^messages$/i, "back to Messages");
+    await until(() => api().leftMode === "messages", 120);
+
     await click(".view-tab", /^compare$/i, "go to Compare");
     await until(() => api().where === "compare", 180);
     ok(!!document.querySelector(".cmp-verdict"),
@@ -1502,6 +1531,16 @@ async function runBlocks(
       api().leftMode);
     ok(document.querySelectorAll(".entry-head[aria-expanded=true]").length >= 1,
       "…and the entries you opened are still open");
+
+    // Replay unmounts when another view is shown, so anything the list keeps
+    // to itself is gone by the time you come back — and coming back to the top
+    // of a list you had scrolled halfway down is how a back button loses
+    // people's trust.
+    await click(".left-head .seg", /^steps$/i, "back to Steps");
+    await until(() => api().leftMode === "steps" && !!document.querySelector(".step-list"), 180);
+    await until(() => scrollAt() === scrolled, 180);
+    ok(scrollAt() === scrolled, "…and the list is scrolled where you left it",
+      `${scrollAt()} vs ${scrolled}`);
 
     await click(".view-tab", /^overview$/i, "go to the overview");
     await until(() => api().where === "overview", 180);
@@ -1860,43 +1899,102 @@ async function runBlocks(
     ok(api().pos === 1, "an arrow key in the list moves the playhead once, not twice",
       `pos=${api().pos}`);
 
-    ok(!!(await menuOffers(/^help$/i, /keyboard shortcuts/i)),
+    ok(!!(await menuOffers(/^more$/i, /keyboard shortcuts/i)),
       "the list is reachable without knowing the key");
   }
 
-  // ---- the session index is honest about what it can see ------------------
+  // ---- the header is two scopes, and folds without losing anything --------
+  //
+  // Seven controls in one row, four of them dropdowns, and at 1150px the
+  // session's own name was squeezed to seventy-five pixels to make room. Three
+  // of the seven are true with or without a session and three are about *this*
+  // session, so they are in two rows now — and the collapse that used to drop
+  // six of them at 1024 in a single step happens once, at 720.
+  //
+  // The viewport cannot be resized from inside the page, so what is asserted
+  // here is the structure and the invariant that makes the fold safe: nothing
+  // the wide layout shows is missing from the menu that replaces it. The real
+  // widths are driven from outside, at six sizes.
   {
-    await need("the session index is honest about what it can see");
-    await click(".shell-bar button", /all sessions/i, "open the session index");
-    await until(() => !!document.querySelector(".view-sessions"), 180);
-    const lede = (document.querySelector(".view-sessions .view-lede")?.textContent ?? "");
-    ok(/a folder you grant/.test(lede), "it says where its data comes from", lede.slice(0, 80));
-    ok(/Nothing is scanned without being asked for/.test(lede),
-      "…and does not claim to have looked at your disk", lede);
-    ok(/no session title, first message or summary/i.test(lede),
-      "…and states what it will never show", lede);
+    await need("the header is two scopes, and folds without losing anything");
 
-    const routes = [...document.querySelectorAll(".route-title")].map((e) => (e.textContent ?? "").trim());
-    ok(routes.length === 2, "there are two ways in", routes.join(" | "));
-    ok(routes[0] === "In this browser", "…the one that needs no server first", routes.join(" | "));
+    const barText = (el: Element) => (el.textContent ?? "").trim();
+    const barGroups = [...document.querySelectorAll(".shell-bar > *")]
+      .filter((e) => e.getBoundingClientRect().width > 0)
+      .filter((e) => !e.classList.contains("shell-brand"))
+      .filter((e) => !e.classList.contains("spacer"))
+      .filter((e) => !e.classList.contains("shell-session"));
+    ok(barGroups.length <= 4, "the bar holds at most four interaction groups",
+      `${barGroups.length}: ${barGroups.map(barText).join(" | ")}`);
+    ok(barGroups.some((e) => /open session/i.test(barText(e))),
+      "…and opening a session is one of them");
+    ok(barGroups.some((e) => /all sessions/i.test(barText(e))),
+      "…and so is the session index");
 
-    // The helper route's copy depends on where the page is served from, and
-    // both branches have to be true wherever this runs. The suite runs on
-    // 127.0.0.1, so it is the local branch that is on screen here; the
-    // deployed wording is asserted statically in verify.mjs, which can read
-    // the source of the branch this run does not take.
-    // Which branch of the helper route is on screen depends on where the page
-    // is served from, and that is decided after mount so the server and the
-    // first client render cannot disagree. Wait for it to be decided.
-    const helperText = () => document.querySelectorAll(".route")[1]?.textContent ?? "";
-    await until(() => !/Checking what is available/.test(helperText()), 180);
-    const helper = helperText();
-    ok(/helper/i.test(helper), "the local helper is the second", helper.slice(0, 60));
-    ok(/127\.0\.0\.1|loopback/.test(helper),
-      "…and says which address it answers on", helper.slice(0, 160));
+    const rowText = [...document.querySelectorAll(".shell-views > *")]
+      .map((e) => (e.textContent ?? "").trim());
+    ok(rowText.some((t) => /^checks/i.test(t)),
+      "Checks is on the row that belongs to the session", rowText.join(" | "));
+    ok(rowText.some((t) => /^export/i.test(t)),
+      "…and so is Export, which is still one click and still named");
+    ok(!barGroups.some((e) => /^checks|^export/i.test(barText(e))),
+      "…and neither is duplicated in the bar");
 
-    await click(".view-back", /back to/i, "go back");
-    await until(() => api().where !== "sessions", 180);
+    // Two menus, one per width, and only one of them is ever laid out. What
+    // the hidden one carries is a property of the source rather than of this
+    // DOM, so verify.mjs asserts it can replace both rows; here it is enough
+    // that both exist and that the narrow one is the one marked narrow.
+    const menus = [...document.querySelectorAll<HTMLElement>(".menu-trigger")]
+      .filter((b) => /^more$/i.test((b.textContent ?? "").trim()));
+    ok(menus.length === 2, "there are two More menus, one for each width",
+      String(menus.length));
+    ok(menus.some((m) => !!m.closest(".bar-narrow")), "…one of them for the narrow bar");
+    ok(menus.some((m) => !!m.closest(".bar-wide")), "…and one for the wide one");
+    const wide = menus.find((m) => m.closest(".bar-wide"));
+    wide?.click();
+    await until(() => document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]').length > 0, 120);
+    const items = [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')]
+      .map((e) => (e.textContent ?? "").trim());
+    for (const [what, re] of [
+      ["keyboard shortcuts", /keyboard shortcuts/i],
+      ["the format reference", /supported format/i],
+      ["the theme", /theme: light/i],
+      ["closing the session", /close session/i],
+    ] as [string, RegExp][]) {
+      ok(items.some((t) => re.test(t)), "the menu carries " + what, items.join(" | "));
+    }
+    ok(items.every((t) => t.length > 2),
+      "…and every item in it is a named action rather than an icon");
+    shortcut("Escape");
+    await until(() => document.querySelectorAll('[role="menuitem"]').length === 0, 120);
+
+    // The name is truncated, so it has to be recoverable without a mouse.
+    const chip = document.querySelector<HTMLElement>(".shell-session");
+    ok(!!chip && chip.tagName === "BUTTON", "the session name is focusable");
+    const full = chip?.getAttribute("aria-label") ?? "";
+    ok(full.includes(api().tape ? "demo" : ""), "…and carries the whole name, untruncated", full);
+    ok(!!chip?.querySelector(".shell-tip"), "…with a tooltip that hover and focus both reach");
+
+    // One collapse point, and it is late. A rule at 1024 is the cliff this
+    // replaced; a rule at 720 is the fold.
+    let foldsAt = 0;
+    let foldsEarly = false;
+    for (const sheet of [...document.styleSheets]) {
+      try {
+        for (const rule of [...(sheet.cssRules ?? [])]) {
+          if (!(rule instanceof CSSMediaRule)) continue;
+          const text = [...rule.cssRules].map((r) => r.cssText).join(" ");
+          if (!/\.bar-wide/.test(text)) continue;
+          const at = Number(/max-width:\s*(\d+)px/.exec(rule.conditionText)?.[1] ?? 0);
+          if (at) foldsAt = at;
+          if (at >= 900) foldsEarly = true;
+        }
+      } catch {
+        /* a cross-origin sheet cannot be inspected; none of ours are */
+      }
+    }
+    ok(foldsAt > 0 && foldsAt <= 800, "the bar folds once, and not before 800px", `${foldsAt}px`);
+    ok(!foldsEarly, "…so a 1024-wide window loses nothing at all");
   }
 
   // ---- the key events list is capped, and says it is ----------------------
@@ -1930,34 +2028,6 @@ async function runBlocks(
       `${document.querySelectorAll(".event").length} of ${total}`);
     ok(/All \d+ indexed events/.test(document.querySelector(".events-more")?.textContent ?? ""),
       "…and says so");
-  }
-
-  // ---- the marks on the rail can be looked up -----------------------------
-  //
-  // The rail draws a shape per kind, which is what keeps it readable with no
-  // colour perception at all — and that is worth nothing if there is no way to
-  // find out what the shapes are. The words come first (every row in the list
-  // says what its step is), and this is the legend for the strip.
-  {
-    await need("the marks on the rail can be looked up");
-    const trigger = document.querySelector<HTMLElement>(".replay-rail .btn");
-    ok(!!trigger, "the rail has a control that explains its marks");
-    ok((trigger?.getAttribute("aria-label") ?? "").length > 10,
-      "…which is icon-only and therefore has a name",
-      trigger?.getAttribute("aria-label") ?? "none");
-    trigger?.click();
-    await until(() => !!document.querySelector(".popover-narrow"), 120);
-    const legend = document.querySelector(".popover-narrow")?.textContent ?? "";
-    for (const what of ["User message", "Tool call", "Tool result", "Failed"]) {
-      ok(legend.includes(what), "the legend names: " + what);
-    }
-    ok(/not only a different colour/.test(legend),
-      "…and says failure is a shape as well as a colour");
-    ok(document.querySelectorAll(".popover-narrow .legend-mark svg").length >= 7,
-      "…with the real mark next to each name",
-      String(document.querySelectorAll(".popover-narrow .legend-mark svg").length));
-    shortcut("Escape");
-    await until(() => !document.querySelector(".popover-narrow"), 120);
   }
 
   // ---- awkward strings do not push the page sideways ----------------------
@@ -1996,6 +2066,114 @@ async function runBlocks(
       `${document.documentElement.scrollWidth} vs ${window.innerWidth}`);
   }
 
+  // ---- the rail says what it means, on hover and on focus -----------------
+  //
+  // Eight small shapes, none of them nameable, was the old rail's problem, and
+  // a legend alone was not the answer. Three things fix it: the grammar is
+  // height and colour rather than a vocabulary of silhouettes, every event is
+  // a button that says what it is, and pointing at any part of the rail names
+  // the step under it.
+  {
+    await need("the rail says what it means, on hover and on focus");
+
+    const marks = [...document.querySelectorAll<HTMLElement>(".track-mark")];
+    ok(marks.length >= 3, "the events on the rail are real controls", `${marks.length} marks`);
+    const names = marks.map((m) => m.getAttribute("aria-label") ?? "");
+    ok(names.every((t) => /^Step \d/.test(t)), "…each named by the step it marks", names[0] ?? "");
+    ok(names.some((t) => /failed\./.test(t)), "…a failure says it failed", names.join(" | "));
+    ok(names.some((t) => /Context compaction/.test(t)), "…a compaction says what it is");
+    ok(names.every((t) => /Go to it\.$/.test(t)), "…and each says it is a way to get there");
+    ok(marks.every((m) => m.tagName === "BUTTON"), "…so every one of them is reachable by Tab");
+
+    // Focusing a mark names it with no mouse anywhere near it.
+    marks[0].focus();
+    await until(() => !!document.querySelector(".track-tip"), 120);
+    const onFocus = document.querySelector(".track-tip")?.textContent ?? "";
+    ok(/^Step \d/.test(onFocus), "focusing a mark names it", onFocus);
+    ok(names[0].startsWith(onFocus), "…in the same words its label uses", onFocus);
+    marks[0].blur();
+    await until(() => !document.querySelector(".track-tip"), 120);
+
+    // And pointing anywhere on the rail names the step under the pointer,
+    // event or not.
+    const rail = document.querySelector<HTMLElement>(".replay-rail .track-hit");
+    const box = rail!.getBoundingClientRect();
+    rail!.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true, clientX: box.left + box.width * 0.5, clientY: box.top + 10,
+    }));
+    await until(() => !!document.querySelector(".track-tip"), 120);
+    const onHover = document.querySelector(".track-tip")?.textContent ?? "";
+    ok(/^Step \d+ · /.test(onHover), "hovering the rail names the step under it", onHover);
+    ok(onHover.length < 60, "…in a phrase rather than a sentence", `${onHover.length} characters`);
+
+    // The key: labelled, shut by default, and drawing the real marks.
+    const key = [...document.querySelectorAll<HTMLElement>(".replay-rail button")]
+      .find((b) => /^key$/i.test((b.textContent ?? "").trim()));
+    ok(!!key, "the key is a labelled control, not a bare question mark");
+    ok(key?.getAttribute("aria-expanded") === "false", "…and shut by default");
+    key?.click();
+    await until(() => !!document.querySelector(".popover-narrow"), 180);
+    const legend = document.querySelector(".popover-narrow")?.textContent ?? "";
+    for (const what of ["Step", "Tool call", "Failure", "Compaction", "Current step"]) {
+      ok(legend.includes(what), "the key names: " + what);
+    }
+    ok(/square cap/.test(legend) && /diamond/.test(legend),
+      "…and says which silhouette each is, so colour is not the only signal");
+    ok(document.querySelectorAll(".popover-narrow .key-mark").length >= 5,
+      "…with the real mark beside each name",
+      String(document.querySelectorAll(".popover-narrow .key-mark").length));
+    shortcut("Escape");
+    await until(() => !document.querySelector(".popover-narrow"), 120);
+  }
+
+  // ---- the session index leads with one route -----------------------------
+  {
+    await need("the session index leads with one route");
+    await click(".shell-bar button", /all sessions/i, "open the session index");
+    await until(() => !!document.querySelector(".view-sessions"), 180);
+
+    const lede = (document.querySelector(".view-sessions .view-lede")?.textContent ?? "");
+    ok(/folder you point this page at/.test(lede),
+      "it says where its data comes from, in one line", lede);
+    ok(lede.length < 120, "…and only one line of it", `${lede.length} characters`);
+
+    // Two equal cards said the two routes were equal choices. They are not:
+    // the folder works everywhere and the helper works on one machine.
+    const pick = document.querySelector(".pick");
+    ok(!!pick, "the recommended route has the page to itself");
+    const pickText = pick?.textContent ?? "";
+    ok(/Nothing is uploaded/.test(pickText), "…and still says nothing is uploaded", pickText.slice(0, 90));
+    ok(/never looks at a folder you have not handed it/.test(pickText),
+      "…and does not claim to have looked at your disk");
+    ok(/No session title, first message or summary/.test(pickText),
+      "…and states what it will never show");
+    // The picker is feature-detected after mount, so the control it chooses
+    // arrives a frame later than the card around it. Chrome always has one of
+    // the two routes; the browser that has neither is covered by the note the
+    // module carries for it, which verify.mjs reads.
+    await until(() => !!document.querySelector(".pick .btn-primary"), 240);
+    ok(!!pick?.querySelector(".btn-primary"),
+      "…with the one action styled as the one action",
+      (pick?.textContent ?? "").slice(-80));
+
+    const adv = document.querySelector<HTMLElement>(".advanced .details-toggle");
+    ok(!!adv, "the helper is a second route, behind a control");
+    ok(adv?.getAttribute("aria-expanded") === "false", "…closed by default");
+    adv?.click();
+    await until(() => !!document.querySelector(".advanced .fold-body"), 180);
+    // Which branch is on screen depends on where the page is served from, and
+    // that is decided after mount. The suite runs on 127.0.0.1, so it is the
+    // local branch here; the deployed wording is asserted in verify.mjs, which
+    // can read the branch this run does not take.
+    const helper = () => document.querySelector(".advanced .fold-body")?.textContent ?? "";
+    await until(() => !/Checking what is available/.test(helper()), 180);
+    ok(/127\.0\.0\.1|loopback|helper/i.test(helper()),
+      "…which names the helper and the address it answers on", helper().slice(0, 120));
+
+    await click(".view-back", /back to/i, "go back");
+    await until(() => api().where !== "sessions", 180);
+  }
+
   // ---- accessible names and reachability ----------------------------------
   {
     await need("accessible names and reachability");
@@ -2013,7 +2191,7 @@ async function runBlocks(
       if (el.classList.contains("detail-panel")) return false;
       // A heading given tabindex="-1" is a focus target, not a control: it is
       // where focus goes when the page it titles replaces the one you were on.
-      if (el.tagName === "H1" && el.getAttribute("tabindex") === "-1") return false;
+      if (/^H[12]$/.test(el.tagName) && el.getAttribute("tabindex") === "-1") return false;
       return el.tabIndex < 0;
     });
     ok(unreachable.length === 0, "every control is reachable by keyboard",

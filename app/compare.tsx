@@ -28,7 +28,7 @@ import { FileIcon, PlayIcon } from "./icons";
 const PAD = 8;
 const H = 36;
 
-const NAMES = ["--chart-tick", "--chart-tick-tool", "--chart-fail", "--chart-warn", "--chart-grid"];
+const NAMES = ["--chart-step", "--chart-tool", "--chart-fail", "--chart-warn", "--chart-grid"];
 let palette: Record<string, string> | null = null;
 function cssVar(name: string): string {
   if (!palette) {
@@ -64,8 +64,8 @@ function Rail({ steps, scale, mark, label }: {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, H);
 
-    const tick = cssVar("--chart-tick") || "#6b7686";
-    const tool = cssVar("--chart-tick-tool") || "#4a6bc4";
+    const tick = cssVar("--chart-step") || "#97a1b2";
+    const tool = cssVar("--chart-tool") || "#7b88a6";
     const risk = cssVar("--chart-fail") || "#b42318";
     const warn = cssVar("--chart-warn") || "#7a460c";
     const grid = cssVar("--chart-grid") || "#dde4ee";
@@ -274,8 +274,11 @@ export default function Compare({ a, b, onSetB, onLoadB, onLoadBFromHelper, onLo
               </>
             ) : (
               <>
+                {/* The same two slots run A fills, so the two cards line up on
+                    their name and on their metadata rather than on nothing. */}
+                <p className="cmp-source-name cmp-source-empty">Not chosen yet</p>
                 <p className="cmp-source-meta">
-                  Nothing chosen yet. Pick a second transcript to compare this one against.
+                  Pick a second transcript and this run is compared against it.
                 </p>
                 <div
                   className={"dropzone dropzone-sm" + (over ? " dropzone-over" : "")}
@@ -354,6 +357,32 @@ export default function Compare({ a, b, onSetB, onLoadB, onLoadBFromHelper, onLo
             )}
           </section>
         </div>
+
+        {!b && (
+          <section className="cmp-limits" aria-labelledby="cmp-limits-title">
+            <h2 className="sec-title" id="cmp-limits-title">What this comparison can tell you</h2>
+            <dl className="facts">
+              <dt>It answers</dt>
+              <dd>
+                where two runs of the same task stopped agreeing about <b>what to do</b> — the
+                first position where their tool sequences differ, and by how much they diverge
+                after it.
+              </dd>
+              <dt>It does not answer</dt>
+              <dd>
+                which run was better. Two runs that call the same tools in the same order are
+                identical to this rule however differently they went, because message contents
+                are never read.
+              </dd>
+              <dt>Alignment</dt>
+              <dd>
+                positional. One extra call early in a run shifts everything after it; a swap or
+                an insertion of one or two is detected and named, and past about eight calls of
+                drift it stops trying and says so.
+              </dd>
+            </dl>
+          </section>
+        )}
 
         {b && cmp && sumB && (
           <>

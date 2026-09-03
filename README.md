@@ -10,7 +10,7 @@ and the forty minutes where nothing happened at all.
 
 ![A replayed session: the step list, and the failed tool result with the call it answers](docs/replay.jpg)
 
-*The built-in demo tape, at the first failed tool call. The list on the left says what every step is; the panel shows the result that failed, the call it answers, and how long that call took. The overview this arrived from is one click away, and so is the context view that explains the +79k jump at step 12.*
+*The built-in demo tape, at the first failed tool call. The list on the left says what every step is; the panel shows the result that failed, the call it answers, and how long that call took. Above them the rail is quiet grey texture with the events picked out — two red failures, an amber compaction, the accent dot of a delegated run — and the blue line is where you are.*
 
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
 `~/.claude/projects/` and parses it entirely in your browser: there is no
@@ -75,8 +75,10 @@ Structure only. The helper never reads or prints a session title — titles are
 generated from your prompts, so they leak exactly what this project exists to
 protect.
 
-**All sessions** has a **Look for it** button rather than probing for the helper
-on every load: a refused connection to a port nothing is listening on is logged
+**All sessions** leads with **Choose a folder**, which works in any browser
+that can grant one. The helper is the second route, behind **Run locally for
+the helper**, and it has a **Look for it** button rather than probing on every
+load: a refused connection to a port nothing is listening on is logged
 in red by the browser before any JavaScript can catch it, and a working page
 that prints a red error looks broken. Once the helper has answered here, the
 page remembers and finds it on its own. Away from localhost that route says so
@@ -138,6 +140,23 @@ rule reference is [`docs/rules.md`](docs/rules.md).
 
 Three views over one session, and you arrive at the first of them whichever way
 you came in.
+
+### The frame
+
+Two rows, and they are two different scopes. The bar holds what is true with or
+without a session open — **Open session**, **All sessions**, and one **More**
+menu with the keyboard shortcuts, the format reference, the theme and closing
+the session in it. The row under it holds what is about *this* session: which
+view you are in, whether it meets its **Checks**, and **Export**.
+
+That split is why the bar does not crowd. Seven controls used to share one row,
+four of them dropdowns, and at 1150px the session's own name was squeezed to
+seventy-five pixels to make room for them. Below 720px both rows fold into the
+one menu, in a single step — nothing disappears at 1024 any more.
+
+The session name is a button, because it is truncated and a truncated name has
+to be recoverable by hover *and* by focus; a `title` attribute covers the mouse
+and nothing else. Activating it goes to the overview.
 
 ### Overview — what happened, and where to look
 
@@ -337,8 +356,8 @@ happen.
 ## Every session at once
 
 **All sessions** is a table of the sessions from a folder you grant this page
-access to, or from the local helper: steps, tool failures and active time by
-default, with tool calls, wall clock, peak context, compactions, delegations,
+access to, or from the local helper: session, last written, steps, tool
+failures and active time by default, with tool calls, wall clock, peak context, compactions, delegations,
 size and a context sparkline available from a **Columns** control or by
 expanding a row. Sparklines share one vertical scale, so the session that grew
 the most context is the tallest line. Click through to open one; the session you
@@ -452,12 +471,12 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 684 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `node verify.mjs` | 697 assertions over the parser, the redactor, the checker and this repository's own guarantees |
 | `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
-| `npm run selftest` | the in-page suite, 371 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
+| `npm run selftest` | the in-page suite, 407 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
 
-The in-page job asserts three numbers, not one — `367/371 passed · 0 failed ·
+The in-page job asserts three numbers, not one — `403/407 passed · 0 failed ·
 4 not run here` — and that it ran in the mode it asked for. Any of those moving
 is a red build. It takes about fourteen seconds on a runner.
 
@@ -679,7 +698,7 @@ in CI now, and what it asserts is the DOM: that a tick was painted, that a word
 appears, that focus moved, that the messages panel stayed virtualised. It cannot
 tell you whether the timeline is *legible*, whether the attribution line reads
 as an explanation, or whether the comparison's caveat is understood. Four of its
-371 assertions need the local helper and are marked *not run here* on a runner —
+407 assertions need the local helper and are marked *not run here* on a runner —
 counted in the denominator, outside the pass count, so their absence is visible
 rather than assumed.
 

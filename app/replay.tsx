@@ -96,6 +96,9 @@ type Props = {
 
   /** Bumped by the owner when a jump should scroll the list. */
   revealKey: number;
+  /** Held by the owner, so leaving Replay and coming back keeps the position. */
+  listScroll: number;
+  onListScroll: (y: number) => void;
   nested?: boolean;
 };
 
@@ -349,6 +352,8 @@ export default function Replay(p: Props) {
                     shownIndex={p.shownIndex}
                     toolOf={toolOf}
                     revealKey={p.revealKey}
+                    scrollTop={p.listScroll}
+                    onScrollTop={p.onListScroll}
                   />
                 )}
                 {p.metaSteps > 0 && (
@@ -383,7 +388,10 @@ export default function Replay(p: Props) {
 
         <section className="replay-main" aria-label="The selected step">
           <header className="step-head">
-            <h2 className="step-head-title">
+            {/* The focus target for a jump from anywhere else. A ring around
+                the whole panel read as a selected container rather than as
+                "focus is here"; a ring around the heading reads as itself. */}
+            <h2 className="step-head-title" id="step-heading" tabIndex={-1}>
               Step {fmtInt(shown)}
               <span className="step-head-sep" aria-hidden> · </span>
               <span className="step-head-kind">{cur ? stepKindLabel(cur) : "—"}</span>
@@ -447,7 +455,6 @@ export default function Replay(p: Props) {
             id="detail-panel"
             role="tabpanel"
             aria-labelledby={"tab-" + p.tab}
-            tabIndex={-1}
           >
             {p.tab === "details" && (
               <StepDetail
