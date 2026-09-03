@@ -90,7 +90,7 @@ export default function SessionOverview({
             {sourceLabel}
             {s.firstT > 0 && <> · {fmtDate(s.firstT)}</>}
           </p>
-          <h1 className="view-title">{tape.meta.label || "Untitled session"}</h1>
+          <h1 className="view-title" tabIndex={-1}>{tape.meta.label || "Untitled session"}</h1>
         </header>
 
         {hint && (

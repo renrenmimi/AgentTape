@@ -277,6 +277,35 @@ function tapeWithDelegation(): TapeFile {
   };
 }
 
+/**
+ * A tape whose strings are as awkward as real ones get: a name with no spaces
+ * in it, a tool name from an MCP server, non-Latin scripts, an emoji, and
+ * token counts near the top of what a number can be. Every one of these has
+ * pushed a page sideways in some interface.
+ */
+function awkwardTape(): TapeFile {
+  const t0 = Date.parse("2026-12-12T10:00:00Z");
+  const long = "y".repeat(120);
+  const tool = "mcp__a_very_long_server_name__do_the_thing_with_a_long_suffix";
+  const steps: TapeStep[] = [
+    { k: "user", y: "user", r: "user", ts: t0, c: 400, b: 0,
+      p: "折扣在多个明细行上重复计算 — итог неверный — 🧾 " + long, x: 1000 },
+    { k: "tool-call", y: "assistant", r: "assistant", m: "m0",
+      d: "claude-opus-5-with-a-very-long-model-identifier-2026",
+      n: tool, u: "t0", ts: t0 + 1000, c: 900, b: 0,
+      p: "/Users/somebody/a/deeply/nested/" + long + "/file.ts",
+      g: [987654321, 12345678, 2147483000, 9999999], x: 2147483000 },
+    { k: "tool-result", y: "user", r: "user", u: "t0", e: 1, w: "tool reported an error",
+      ts: t0 + 2000, c: 3000, b: 0, p: "x".repeat(200), x: 2147483000 },
+  ];
+  return {
+    format: TAPE_FORMAT, redacted: false,
+    label: "a-transcript-with-an-absurdly-long-name-" + long + ".jsonl",
+    session: { id: "", bytes: 4096, lines: 3, badLines: 0, versions: ["9.9.9"] },
+    fields: {}, steps,
+  };
+}
+
 /** A tape big enough that a list which is not virtualised will show it. */
 function syntheticTape(steps: number): TapeFile {
   const out: TapeStep[] = [];
@@ -360,7 +389,7 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 353;
+const DECLARED_ASSERTIONS = 366;
 
 /**
  * How many `ok(` and `skip(` call sites this file contains.
@@ -377,7 +406,7 @@ const DECLARED_ASSERTIONS = 353;
  * smaller number confidently, which is why this is now counted twice by methods
  * that fail differently and the two have to agree.
  */
-export const DECLARED_CALL_SITES = 320;
+export const DECLARED_CALL_SITES = 330;
 
 /**
  * Which mode the run is in, and what that mode is supposed to produce.
@@ -1828,6 +1857,71 @@ async function runBlocks(
     await until(() => api().where !== "sessions", 180);
   }
 
+  // ---- the marks on the rail can be looked up -----------------------------
+  //
+  // The rail draws a shape per kind, which is what keeps it readable with no
+  // colour perception at all — and that is worth nothing if there is no way to
+  // find out what the shapes are. The words come first (every row in the list
+  // says what its step is), and this is the legend for the strip.
+  {
+    await need("the marks on the rail can be looked up");
+    const trigger = document.querySelector<HTMLElement>(".replay-rail .btn");
+    ok(!!trigger, "the rail has a control that explains its marks");
+    ok((trigger?.getAttribute("aria-label") ?? "").length > 10,
+      "…which is icon-only and therefore has a name",
+      trigger?.getAttribute("aria-label") ?? "none");
+    trigger?.click();
+    await until(() => !!document.querySelector(".popover-narrow"), 120);
+    const legend = document.querySelector(".popover-narrow")?.textContent ?? "";
+    for (const what of ["User message", "Tool call", "Tool result", "Failed"]) {
+      ok(legend.includes(what), "the legend names: " + what);
+    }
+    ok(/not only a different colour/.test(legend),
+      "…and says failure is a shape as well as a colour");
+    ok(document.querySelectorAll(".popover-narrow .legend-mark svg").length >= 7,
+      "…with the real mark next to each name",
+      String(document.querySelectorAll(".popover-narrow .legend-mark svg").length));
+    shortcut("Escape");
+    await until(() => !document.querySelector(".popover-narrow"), 120);
+  }
+
+  // ---- awkward strings do not push the page sideways ----------------------
+  //
+  // A session is named after a file and a file can be named anything. Every
+  // string here has pushed some interface sideways: an unbroken hundred-
+  // character name, an MCP tool name, non-Latin scripts, an emoji, and token
+  // counts near the top of the range.
+  {
+    await need("awkward strings do not push the page sideways");
+    // Not driveable: this shape of file is generated, not sitting on a disk.
+    api().loadTapeFile(awkwardTape());
+    await until(() => api().view?.steps.length === 3, 240);
+
+    await click(".view-tab", /^overview$/i, "look at the overview");
+    await until(() => api().where === "overview", 180);
+    const title = (document.querySelector(".view-title")?.textContent ?? "");
+    ok(title.length > 100, "the long name is shown rather than swallowed", String(title.length));
+    ok(document.documentElement.scrollWidth <= window.innerWidth + 1,
+      "…and the overview does not scroll sideways",
+      `${document.documentElement.scrollWidth} vs ${window.innerWidth}`);
+
+    await click(".view-tab", /^replay$/i, "go to Replay");
+    await until(() => api().where === "replay" && !!document.querySelector(".step-list"), 240);
+    await goTo(1);
+    ok(document.documentElement.scrollWidth <= window.innerWidth + 1,
+      "…and neither does Replay",
+      `${document.documentElement.scrollWidth} vs ${window.innerWidth}`);
+    ok(/a_very_long_server_name/.test(document.querySelector(".step-head-title")?.textContent ?? ""),
+      "…with the whole tool name in the heading");
+
+    await click(".tabs .tab", /^record data$/i, "open Record data");
+    await until(() => api().tab === "record", 180);
+    await until(() => /Raw record/.test(document.querySelector(".detail-panel")?.textContent ?? ""), 240);
+    ok(document.documentElement.scrollWidth <= window.innerWidth + 1,
+      "…and neither does a record full of long values",
+      `${document.documentElement.scrollWidth} vs ${window.innerWidth}`);
+  }
+
   // ---- accessible names and reachability ----------------------------------
   {
     await need("accessible names and reachability");
@@ -1843,6 +1937,9 @@ async function runBlocks(
       if (el.getAttribute("role") === "tab" && el.getAttribute("aria-selected") === "false") return false;
       if (el.getAttribute("role") === "menuitem" || el.getAttribute("role") === "menuitemradio") return false;
       if (el.classList.contains("detail-panel")) return false;
+      // A heading given tabindex="-1" is a focus target, not a control: it is
+      // where focus goes when the page it titles replaces the one you were on.
+      if (el.tagName === "H1" && el.getAttribute("tabindex") === "-1") return false;
       return el.tabIndex < 0;
     });
     ok(unreachable.length === 0, "every control is reachable by keyboard",

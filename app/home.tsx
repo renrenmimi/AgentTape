@@ -29,7 +29,7 @@ export default function Home({ onFiles, onDemo, onBrowseLocal, progress, error }
   return (
     <main className="home" id="main">
       <div className="home-inner">
-        <h1 className="home-title">See what happened in an agent session.</h1>
+        <h1 className="home-title" tabIndex={-1}>See what happened in an agent session.</h1>
         <p className="home-lede">
           Replay a Claude Code transcript, inspect tool calls, and trace changes in context.
         </p>

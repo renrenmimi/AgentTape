@@ -84,6 +84,16 @@ export default function Page() {
   const [inside, setInside] = useState(-1);
   const [visitedReplay, setVisitedReplay] = useState(false);
   const [hintOff, setHintOff] = useState(false);
+  /**
+   * Bumped whenever a session opens or closes.
+   *
+   * Activating a control that replaces the whole page destroys the control:
+   * the button a keyboard user pressed is gone, focus falls back to `<body>`,
+   * and the next Tab starts again from the top of the document. Moving focus
+   * to the heading of what arrived is the difference between landing
+   * somewhere and being put back at the door.
+   */
+  const [landed, setLanded] = useState(0);
 
   // ---- replay state, held here so leaving and coming back keeps it --------
   const [leftMode, setLeftMode] = useState<LeftMode>("steps");
@@ -311,6 +321,7 @@ export default function Page() {
     setLeftMode("steps");
     setChecksOpen(false);
     setSessionsOpen(false);
+    setLanded((k) => k + 1);
   }, []);
 
   const adopt = useCallback((t: Tape, kind: SourceKind) => {
@@ -335,6 +346,7 @@ export default function Page() {
     setView("overview");
     setSessionsOpen(false);
     setOpenDialog(false);
+    setLanded((k) => k + 1);
   }, []);
 
   const loadTapeJson = useCallback(
@@ -756,6 +768,13 @@ export default function Page() {
     tape, stepView, pos, setPos, seekNext, keysOpen, checksOpen, openDialog, inside, offer,
     copyFallback, anyOverlay, view, sessionsOpen, goToView,
   ]);
+
+  // The heading of whatever just arrived, once it is on screen. Runs in the
+  // commit that rendered it, because `landed` changes in the same batch.
+  useEffect(() => {
+    if (!landed) return;
+    document.querySelector<HTMLElement>(".view-title, .home-title")?.focus();
+  }, [landed]);
 
   // A status message is news, not furniture: it goes away.
   useEffect(() => {

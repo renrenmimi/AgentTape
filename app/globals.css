@@ -283,7 +283,20 @@ kbd {
   border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu);
 }
+.popover-narrow { width: 300px; }
 .popover-sec + .popover-sec { margin-top: 16px; }
+
+.legend { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; }
+.legend-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  color: var(--chart-tick);
+}
+.legend-fail .legend-mark { color: var(--error-text); }
+.legend-delegate .legend-mark { color: var(--text-accent); }
 .popover-title { font-size: 13px; line-height: 20px; color: var(--text-secondary); margin-bottom: 8px; }
 .popover-foot { display: flex; gap: 8px; margin-top: 16px; }
 .tool-opts { max-height: 220px; overflow-y: auto; margin-top: 8px; }
@@ -373,7 +386,9 @@ kbd {
 
 .view-head { margin-bottom: 32px; }
 .view-eyebrow { font-size: 13px; line-height: 20px; color: var(--text-secondary); margin-bottom: 4px; }
-.view-title { font-size: 28px; line-height: 36px; }
+/* A session is named after a file, and a file can be named anything. Without
+   this a long unbroken name pushes the whole page sideways. */
+.view-title { font-size: 28px; line-height: 36px; overflow-wrap: anywhere; }
 .view-lede {
   margin-top: 8px;
   font-size: 16px;
@@ -399,7 +414,7 @@ kbd {
 
 .home { padding: 48px var(--gutter) 64px; }
 .home-inner { max-width: 1060px; margin: 0 auto; }
-.home-title { font-size: 36px; line-height: 44px; font-weight: 650; max-width: 20ch; }
+.home-title { font-size: 36px; line-height: 44px; font-weight: 650; max-width: 20ch; overflow-wrap: anywhere; }
 .home-lede {
   margin-top: 12px;
   font-size: 16px;
@@ -515,7 +530,7 @@ kbd {
   padding: 16px 24px;
   border-bottom: 1px solid var(--border-subtle);
 }
-.dialog-head h2 { font-size: 18px; line-height: 26px; }
+.dialog-head h2 { font-size: 18px; line-height: 26px; overflow-wrap: anywhere; }
 .dialog-body { padding: 24px; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 
@@ -602,6 +617,7 @@ kbd {
 .figure-label { font-size: 13px; line-height: 20px; color: var(--text-secondary); }
 
 .summary-facts {
+  overflow-wrap: anywhere;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border-subtle);
@@ -620,7 +636,7 @@ kbd {
   gap: 16px;
   margin-bottom: 8px;
 }
-.section-head h2 { font-size: 18px; line-height: 26px; }
+.section-head h2 { font-size: 18px; line-height: 26px; overflow-wrap: anywhere; }
 
 .events, .context-teaser, .details-block { margin-top: 32px; }
 
@@ -644,7 +660,7 @@ kbd {
 .event-go { flex: 0 0 auto; }
 .events-more { margin-top: 12px; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
 
-.teaser-line { font-size: 15px; line-height: 24px; max-width: 75ch; }
+.teaser-line { font-size: 15px; line-height: 24px; max-width: 75ch; overflow-wrap: anywhere; }
 
 .details-toggle {
   display: flex;
@@ -758,7 +774,7 @@ th.num .ov-sort { flex-direction: row-reverse; }
   padding: 8px var(--gutter);
   border-bottom: 1px solid var(--border-subtle);
 }
-.replay-title { font-size: 20px; line-height: 28px; flex: 0 0 auto; }
+.replay-title { font-size: 20px; line-height: 28px; flex: 0 0 auto; overflow-wrap: anywhere; }
 
 .stepnav { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .stepnav-at {
@@ -769,7 +785,8 @@ th.num .ov-sort { flex-direction: row-reverse; }
   text-align: center;
 }
 
-.replay-rail { flex: 1 1 auto; min-width: 120px; }
+.replay-rail { flex: 1 1 auto; min-width: 120px; display: flex; align-items: center; gap: 4px; }
+.replay-rail .track { flex: 1 1 auto; min-width: 0; }
 .replay-jumps { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
 .replay-notice { margin: 8px var(--gutter) 0; }
@@ -1207,6 +1224,7 @@ th.num .ov-sort { flex-direction: row-reverse; }
 .check-main { flex: 1 1 auto; min-width: 0; }
 .check-label { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
 .check-detail { font-size: 13px; line-height: 20px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.step-head-title { overflow-wrap: anywhere; }
 .check-nostep { flex: 0 0 auto; font-size: 13px; }
 .checks-edit { margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
 .rule-edits { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }

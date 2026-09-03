@@ -31,6 +31,7 @@ import StepDetail from "./step-detail";
 import ContextView from "./context-view";
 import RecordData from "./record-data";
 import { FilterChips, FiltersButton, SearchBox } from "./filter-bar";
+import RailLegend from "./rail-legend";
 import { CrossIcon, ListIcon, NextIcon, PrevIcon, WarnIcon } from "./icons";
 
 export type LeftMode = "steps" | "messages";
@@ -208,6 +209,7 @@ export default function Replay(p: Props) {
             shownIndex={p.shownIndex}
             toolOf={toolOf}
           />
+          <RailLegend delegations={!!p.delegatedMask} />
         </div>
 
         <div className="replay-jumps">
