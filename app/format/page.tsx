@@ -89,14 +89,14 @@ export default function FormatPage() {
   return (
     <main className="doc">
       <header className="doc-head">
-        <Link href="/" className="btn btn-sm">← AgentTape</Link>
+        <Link href="/" className="btn btn-sm">← Back to AgentTape</Link>
         <span className="spacer" />
-        <span className="eyebrow">reference</span>
+        <span className="doc-tag">Reference</span>
       </header>
 
       <div className="doc-body">
         <nav className="doc-toc" aria-label="Contents">
-          <span className="eyebrow">contents</span>
+          <h2 className="doc-toc-title">Contents</h2>
           <ol>
             {toc.map((h) => (
               <li key={h.slug}><a href={"#" + h.slug}>{h.text}</a></li>

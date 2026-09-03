@@ -10,7 +10,8 @@
 // memory and leaves 76 MB of transcript on disk where it belongs.
 
 import { bodyOf, createIndexer, finishIndex, pushLine } from "./parser.ts";
-import type { Step, StepBody, Tape, TapeMeta } from "./format.ts";
+import { RAW_RECORD_LIMIT, type RawRecord, type Step, type StepBody, type Tape, type TapeMeta }
+  from "./format.ts";
 
 const CHUNK = 1 << 20;
 const NL = 10;
@@ -86,7 +87,11 @@ export async function loadJsonlBlob(
   meta.bytes = total;
   onProgress?.({ bytes: total, total, lines: meta.lines, phase: "done" });
 
-  return { meta, steps, entries, body: makeBlobReader(blob, steps) };
+  return {
+    meta, steps, entries,
+    body: makeBlobReader(blob, steps),
+    raw: makeRawReader(blob, steps),
+  };
 }
 
 /**
@@ -116,6 +121,30 @@ function makeBlobReader(blob: Blob, steps: Step[]): (i: number) => Promise<StepB
   };
 }
 
+/**
+ * The line itself, read back from the same Blob at the same offsets.
+ *
+ * Bounded on the way out rather than on the way in: the slice is one line,
+ * which is what `body()` already reads, but a 1.34 MB line rendered whole is a
+ * stalled tab. The count of what was cut travels with the text so the panel can
+ * say so instead of ending mid-token.
+ */
+function makeRawReader(blob: Blob, steps: Step[]): (i: number) => Promise<RawRecord | null> {
+  return async (i: number) => {
+    const s = steps[i];
+    if (!s) return null;
+    const bytes = new Uint8Array(await blob.slice(s.off, s.off + s.len).arrayBuffer());
+    const text = decoder.decode(bytes);
+    return {
+      text: text.slice(0, RAW_RECORD_LIMIT),
+      chars: text.length,
+      bytes: s.len,
+      line: s.line,
+      truncated: text.length > RAW_RECORD_LIMIT,
+    };
+  };
+}
+
 /** Same walk, but over a string. Used by verify.mjs and by small pasted tapes. */
 export function loadJsonlString(text: string, label: string): Tape {
   const ix = createIndexer(label);
@@ -139,7 +168,22 @@ export function loadJsonlString(text: string, label: string): Tape {
     }
   }
   const empty: StepBody = { text: null, input: undefined, parts: [], placeholder: false, chars: 0 };
-  return { meta, steps, entries, body: async (i) => bodies.get(i) ?? empty };
+  return {
+    meta, steps, entries,
+    body: async (i) => bodies.get(i) ?? empty,
+    raw: async (i) => {
+      const s = steps[i];
+      const text = s ? lines[s.line - 1] ?? "" : "";
+      if (!s) return null;
+      return {
+        text: text.slice(0, RAW_RECORD_LIMIT),
+        chars: text.length,
+        bytes: s.len,
+        line: s.line,
+        truncated: text.length > RAW_RECORD_LIMIT,
+      };
+    },
+  };
 }
 
 export type { TapeMeta };

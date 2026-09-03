@@ -166,8 +166,12 @@ export function verdictLine(c: Comparison): string {
     case "no-spine":
       return "These runs cannot be aligned: at least one of them never called a tool.";
     case "identical":
+      // This used to end "What they said differs" — an assertion about text,
+      // from a comparison that never reads text. Two runs of the same file
+      // came back claiming their contents differed, which is the one thing
+      // this function was in a position to know was false.
       return `Both runs called the same ${n(c.lenA)} tools in the same order. ` +
-        "What they said differs, and this comparison does not read what they said.";
+        "Message contents are not compared.";
     case "a-ended":
       return `They agreed for ${n(c.agreed)} tool calls, then run A stopped and run B kept going ` +
         `for ${n(c.lenB - c.lenA)} more.`;

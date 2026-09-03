@@ -6,39 +6,53 @@
 // and one of the delegated runs in the probe corpus made 130 tool calls — that
 // is a session, not a footnote.
 //
-// So this is the workbench again, pointed at the subagent's own tape: the same
-// timeline, the same messages panel, the same step detail, built from the same
-// components rather than reimplemented. What it deliberately does not have is
-// the things that belong to a top-level run — the filter bar, the comparison,
-// the assertions, the redaction export — because a nested run is something you
-// are looking *into*, not something you are working *on*.
+// So this is the replay again, pointed at the subagent's own tape: the same
+// component, the same list, the same subviews, rather than a second
+// implementation that would drift. What it deliberately does not carry is the
+// things that belong to a top-level run — the filter, the comparison, the
+// checks, the redaction export — because a nested run is something you are
+// looking *into*, not something you are working *on*, and an Export button
+// here would be ambiguous about which run it meant.
+//
+// A breadcrumb and a way back, because the failure mode of a nested view is
+// arriving somewhere with no idea how to leave. The parent stays mounted
+// underneath, so leaving restores its scroll position and its focus without
+// anything having to remember them.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pairTools } from "@/lib/parser";
-import { fmtBytes, fmtDuration, fmtInt, fmtTokens } from "@/lib/summary";
+import { fmtInt, summarise, traceJump } from "@/lib/summary";
 import type { SubRun } from "@/lib/subagents";
-import Timeline from "./timeline";
-import MessagesPanel from "./messages-panel";
-import StepDetail from "./step-detail";
+import Replay, { type DetailTab, type LeftMode } from "./replay";
 import { useDialogFocus } from "./dialog";
+import { BackIcon } from "./icons";
 
 type Props = {
   run: SubRun;
-  /** Which step of the parent delegated this, so the header can say. */
+  /** Which step of the parent delegated this, as the parent numbers it. */
   parentStep: number;
+  /** What the parent session is called, for the breadcrumb. */
+  parentLabel: string;
   onClose: () => void;
 };
 
-export default function NestedWorkbench({ run, parentStep, onClose }: Props) {
+export default function NestedWorkbench({ run, parentStep, parentLabel, onClose }: Props) {
   const panel = useRef<HTMLDivElement>(null);
   useDialogFocus(panel);
 
   const tape = run.tape;
   const [pos, setPos] = useState(0);
+  const [leftMode, setLeftMode] = useState<LeftMode>("steps");
+  const [tab, setTab] = useState<DetailTab>("details");
+  const [entriesOpen, setEntriesOpen] = useState<Set<number>>(() => new Set());
+  const [follow, setFollow] = useState(true);
+  const [revealKey, setRevealKey] = useState(0);
+
   const pairs = useMemo(() => pairTools(tape.steps), [tape]);
+  const summary = useMemo(() => summarise(tape), [tape]);
 
   // Bookkeeping records are filtered out here as they are upstairs, so the two
-  // timelines count steps the same way.
+  // step lists count the same way.
   const steps = useMemo(() => tape.steps.filter((s) => s.kind !== "meta"), [tape]);
   const at = useMemo(() => {
     const out = new Int32Array(tape.steps.length).fill(-1);
@@ -49,26 +63,35 @@ export default function NestedWorkbench({ run, parentStep, onClose }: Props) {
   const curGlobal = steps.length ? steps[Math.min(pos, steps.length - 1)].i : 0;
   const shownIndex = useCallback((gi: number) => (at[gi] >= 0 ? at[gi] + 1 : 0), [at]);
   const goToGlobal = useCallback((gi: number) => {
-    if (at[gi] >= 0) setPos(at[gi]);
+    if (at[gi] >= 0) { setPos(at[gi]); setRevealKey((k) => k + 1); }
   }, [at]);
 
   const seekNext = useCallback((dir: 1 | -1) => {
     for (let i = pos + dir; i >= 0 && i < steps.length; i += dir) {
-      if (steps[i].err) { setPos(i); return; }
+      if (steps[i].err) { setPos(i); setRevealKey((k) => k + 1); return; }
     }
   }, [pos, steps]);
 
-  // Arrows and n/p, scoped to this overlay. Escape is the page's job.
+  const compactions = useMemo(
+    () => summary.compactAt.map((i) => at[i]).filter((i) => i >= 0),
+    [summary, at],
+  );
+  const trace = useMemo(
+    () => traceJump(tape.steps, summary.jumpAt, summary.jumpBy),
+    [tape, summary],
+  );
+
+  // Arrows and n/p, scoped to this layer. Escape is the page's job, and the
+  // parent's handler stands down while this is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // A keydown dispatched on `window` — which is what a shortcut sent by
-      // the page itself looks like, and what the self-test sends — has a
-      // target that is not a Node at all. `contains` throws on one rather
-      // than returning false, so the cast this used to do was a lie that
-      // took the whole handler down with it.
+      // the page itself looks like — has a target that is not a Node at all.
+      // `contains` throws on one rather than returning false, so this narrows
+      // instead of casting.
       const t = e.target;
       if (!(t instanceof HTMLElement) || !panel.current?.contains(t)) return;
-      if (t.closest(".track-hit")) return;
+      if (t.closest(".track-hit, .chart-hit, [role='listbox']")) return;
       const tag = t.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable) return;
       const n = steps.length;
@@ -76,6 +99,8 @@ export default function NestedWorkbench({ run, parentStep, onClose }: Props) {
       let next = pos;
       if (e.key === "ArrowRight") next = pos + big;
       else if (e.key === "ArrowLeft") next = pos - big;
+      else if (e.key === "PageDown") next = pos + 50;
+      else if (e.key === "PageUp") next = pos - 50;
       else if (e.key === "Home") next = 0;
       else if (e.key === "End") next = n - 1;
       else if (e.key === "n" || e.key === "N") { e.preventDefault(); seekNext(1); return; }
@@ -83,92 +108,88 @@ export default function NestedWorkbench({ run, parentStep, onClose }: Props) {
       else return;
       e.preventDefault();
       setPos(Math.max(0, Math.min(n - 1, next)));
+      setRevealKey((k) => k + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pos, steps, seekNext]);
 
-  const wall = run.lastT && run.firstT ? run.lastT - run.firstT : 0;
-
   return (
-    <div className="nested-wb" role="dialog" aria-modal="true"
-      aria-label="A delegated run" tabIndex={-1} ref={panel}>
-      <header className="strip">
-        <div className="strip-brand">
-          <b>Delegated run</b>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">from</span>
-          <span className="stat-v">step {fmtInt(parentStep)}</span>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">agent</span>
-          <span className="stat-v">{run.agentId.slice(0, 10)}</span>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">steps</span>
-          <span className="stat-v">{fmtInt(run.steps)}<small>{fmtBytes(run.bytes)}</small></span>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">tool calls</span>
-          <span className="stat-v">{fmtInt(run.toolCalls)}</span>
-        </div>
-        <div className={"stat" + (run.errors ? " stat-risk" : "")}>
-          <span className="eyebrow stat-k">errors</span>
-          <span className="stat-v">{fmtInt(run.errors)}</span>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">tokens</span>
-          <span className="stat-v">
-            {fmtTokens(run.input + run.cacheRead + run.cacheCreate)}
-            <small>in · {fmtTokens(run.output)} out</small>
-          </span>
-        </div>
-        <div className="stat">
-          <span className="eyebrow stat-k">wall clock</span>
-          <span className="stat-v">{fmtDuration(wall)}</span>
-        </div>
-        <div className="strip-actions">
-          <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
-        </div>
-      </header>
+    <div
+      className="layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="A delegated run"
+      tabIndex={-1}
+      ref={panel}
+    >
+      <nav className="crumbs" aria-label="Where you are">
+        <button type="button" className="btn btn-quiet btn-sm" onClick={onClose}>
+          <BackIcon />
+          <span>Back to step {fmtInt(parentStep)}</span>
+        </button>
+        <ol className="crumb-trail">
+          <li>{parentLabel || "Session"}</li>
+          <li>Step {fmtInt(parentStep)}</li>
+          <li aria-current="page">Delegated run</li>
+        </ol>
+        <span className="spacer" />
+        <span className="crumb-note">
+          {fmtInt(run.steps)} steps · {fmtInt(run.toolCalls)} tool calls
+          {run.errors > 0 && <> · {fmtInt(run.errors)} failed</>}
+        </span>
+      </nav>
 
-      <section className="tracks" aria-label="Timeline of the delegated run">
-        <div className="track-head">
-          <span className="eyebrow">delegated timeline</span>
-          <span className="spacer" />
-          <span className="entry-tok">step {pos + 1} / {steps.length}</span>
-          <span className="entry-tok">
-            <kbd>←</kbd> <kbd>→</kbd> step · <kbd>n</kbd> <kbd>p</kbd> failures · <kbd>Esc</kbd> back
-          </span>
-        </div>
-        <Timeline steps={steps} pos={pos} onPos={setPos} onSeek={seekNext} />
-      </section>
-
-      <div className="body">
-        <MessagesPanel
-          entries={tape.entries}
-          steps={tape.steps}
-          curStep={curGlobal}
-          redacted={tape.meta.redacted}
-          onSelectStep={goToGlobal}
-          shownIndex={shownIndex}
-          entryHits={null}
-        />
-        <StepDetail
-          tape={tape}
-          curStep={curGlobal}
-          pairs={pairs}
-          onSelectStep={goToGlobal}
-          shownIndex={shownIndex}
-          delegation={null}
-          onLoadSubagent={null}
-          subLoading={false}
-          subError=""
-          offeredBytes={0}
-          outOfFilter={false}
-        />
-      </div>
+      <Replay
+        title="Delegated run"
+        tape={tape}
+        steps={steps}
+        pos={pos}
+        onPos={(k) => setPos(k)}
+        curGlobal={curGlobal}
+        pairs={pairs}
+        shownIndex={shownIndex}
+        onSelectStep={goToGlobal}
+        summary={summary}
+        trace={trace}
+        compactions={compactions}
+        jumpAt={at[summary.jumpAt] >= 0 ? at[summary.jumpAt] : 0}
+        fellAtShown={trace && trace.fellAt >= 0 ? shownIndex(trace.fellAt) : 0}
+        leftMode={leftMode}
+        onLeftMode={setLeftMode}
+        tab={tab}
+        onTab={setTab}
+        filter={null}
+        onFilter={() => {}}
+        filterIndex={null}
+        matches={0}
+        mask={null}
+        ordinal={0}
+        onSeek={seekNext}
+        onJumpCompaction={() => {
+          if (!compactions.length) return;
+          setPos(compactions.find((i) => i > pos) ?? compactions[0]);
+          setRevealKey((k) => k + 1);
+        }}
+        // Bookkeeping records are always out of view here, so there is no toggle
+        // to offer: a control that cannot do anything is worse than no control.
+        metaSteps={0}
+        showMeta={false}
+        onShowMeta={() => {}}
+        delegatedMask={null}
+        delegation={null}
+        onLoadSubagent={null}
+        subLoading={false}
+        subError=""
+        offeredBytes={0}
+        entryHits={null}
+        entriesOpen={entriesOpen}
+        onEntriesOpen={setEntriesOpen}
+        follow={follow}
+        onFollow={setFollow}
+        revealKey={revealKey}
+        nested
+      />
     </div>
   );
 }

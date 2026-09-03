@@ -1,45 +1,135 @@
 "use client";
 
-// The filter bar. Four controls and a count.
+// Search, filters, and what is currently being filtered.
 //
-// The tool menu is a native <details>, which means it opens with the keyboard,
-// closes with Escape and needs no state of its own. The size threshold is a
-// <select> of presets rather than a free number field: "show me what blew up
-// the context" should be one movement, not a decision about what number to
-// type.
+// Three pieces, placed where each is used rather than in one bar at the top:
+// the search box sits directly above the list it searches, the tool and size
+// conditions live behind a Filters button, and whatever is currently in force
+// is a row of chips that is always on screen. A filter you cannot see is a
+// filter you will blame the data for.
 //
-// The search note is not decoration. Search reads the 96-character previews
-// the index already holds, never the bodies, because reading bodies would pull
-// the transcript back into memory. That limit is written on the control, since
-// a search that quietly misses matches is worse than one that says what it
-// covers.
+// The scope note on the search box is not decoration. Search reads the
+// 96-character previews the index already holds and never a body, because
+// reading bodies would pull the transcript back into memory — which is the
+// design the whole tool is built around. A search that quietly misses matches
+// is worse than one that says what it covers.
 
+import { useEffect, useId, useRef, useState } from "react";
 import { EMPTY_FILTER, SIZE_PRESETS, isActive, type Filter, type FilterIndex } from "@/lib/filter";
-import { useState } from "react";
 import { fmtInt } from "@/lib/summary";
+import { CrossIcon, FilterIcon, SearchIcon } from "./icons";
 
-type Props = {
+export function SearchBox({
+  filter, onFilter, matches, total, ordinal,
+}: {
   filter: Filter;
   onFilter: (f: Filter) => void;
-  index: FilterIndex;
   matches: number;
   total: number;
-  /** Which match the playhead is on, 1-based, or 0 when it is not on one. */
   ordinal: number;
-  compactions: number[];
-  onJumpCompaction: () => void;
-  outOfFilter: boolean;
-};
-
-export default function FilterBar({
-  filter, onFilter, index, matches, total, ordinal, compactions, onJumpCompaction, outOfFilter,
-}: Props) {
+}) {
+  const id = useId();
   const active = isActive(filter);
-  // A session can call a hundred MCP tools. Twenty-eight is already more than
-  // a menu should ask anyone to read.
+  return (
+    <div className="search">
+      <label className="search-label" htmlFor={id}>Search summaries</label>
+      <div className="search-field">
+        <SearchIcon />
+        <input
+          id={id}
+          type="search"
+          className="input filter-input"
+          value={filter.query}
+          placeholder="tool name, record type, summary text"
+          aria-describedby={id + "-note"}
+          onChange={(e) => onFilter({ ...filter, query: e.target.value })}
+        />
+      </div>
+      <p className="search-note" id={id + "-note"}>
+        Summaries, tool names and record types. Full message bodies are not searched.
+      </p>
+      <p className="search-count" aria-live="polite">
+        {active
+          ? `${fmtInt(matches)} of ${fmtInt(total)} steps match` +
+            (matches > 0 && ordinal > 0
+              ? ` · on match ${fmtInt(ordinal)}${ordinal === matches ? " (last)" : ""}`
+              : matches > 0 ? " · the selected step is not one of them" : "")
+          : `${fmtInt(total)} steps`}
+      </p>
+    </div>
+  );
+}
+
+/** The conditions in force, always visible, each removable on its own. */
+export function FilterChips({
+  filter, onFilter,
+}: { filter: Filter; onFilter: (f: Filter) => void }) {
+  if (!isActive(filter)) return null;
+  const chips: { key: string; label: string; clear: () => void }[] = [];
+  if (filter.query.trim()) {
+    chips.push({
+      key: "q",
+      label: `text: ${filter.query.trim()}`,
+      clear: () => onFilter({ ...filter, query: "" }),
+    });
+  }
+  for (const t of filter.tools) {
+    chips.push({
+      key: "tool:" + t,
+      label: `tool: ${t}`,
+      clear: () => onFilter({ ...filter, tools: filter.tools.filter((x) => x !== t) }),
+    });
+  }
+  if (filter.minChars > 0) {
+    chips.push({
+      key: "min",
+      label: `at least ${fmtInt(filter.minChars)} characters`,
+      clear: () => onFilter({ ...filter, minChars: 0 }),
+    });
+  }
+  return (
+    <div className="chips" aria-label="Filters in force">
+      {chips.map((c) => (
+        <span className="chip" key={c.key}>
+          <span className="chip-text">{c.label}</span>
+          <button
+            type="button"
+            className="chip-x"
+            aria-label={`Remove filter: ${c.label}`}
+            onClick={c.clear}
+          >
+            <CrossIcon size={12} />
+          </button>
+        </span>
+      ))}
+      <button type="button" className="btn btn-quiet btn-sm" onClick={() => onFilter(EMPTY_FILTER)}>
+        Clear filters
+      </button>
+    </div>
+  );
+}
+
+/** Tool names and payload size, behind a button, with the count on the button. */
+export function FiltersButton({
+  filter, onFilter, index,
+}: { filter: Filter; onFilter: (f: Filter) => void; index: FilterIndex }) {
+  const [open, setOpen] = useState(false);
   const [toolQuery, setToolQuery] = useState("");
+  const host = useRef<HTMLDivElement>(null);
+  const id = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!host.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [open]);
+
   const q = toolQuery.trim().toLowerCase();
   const shown = q ? index.tools.filter((t) => t.name.toLowerCase().includes(q)) : index.tools;
+  const n = filter.tools.length + (filter.minChars > 0 ? 1 : 0);
 
   const toggleTool = (name: string) => {
     const has = filter.tools.includes(name);
@@ -50,127 +140,102 @@ export default function FilterBar({
   };
 
   return (
-    <div className="filters" role="search" aria-label="Filter steps">
-      <span className="eyebrow">filter</span>
+    <div className="popover-host" ref={host}>
+      <button
+        type="button"
+        className={"btn btn-sm" + (n ? " btn-on" : "")}
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <FilterIcon />
+        <span>Filters</span>
+        {n > 0 && <span className="btn-tail">{n}</span>}
+      </button>
 
-      <div className="filter-field">
-        <input
-          type="search"
-          className="filter-input"
-          value={filter.query}
-          placeholder="search summaries and tools"
-          aria-label="Search step summaries, tool names and record types. Summaries only — full bodies are not searched."
-          onChange={(e) => onFilter({ ...filter, query: e.target.value })}
-        />
-        <span className="filter-note" aria-hidden>
-          summaries only, not full text
-        </span>
-      </div>
-
-      <details className="tool-menu">
-        <summary aria-label={`Filter by tool. ${filter.tools.length || "no"} selected of ${index.tools.length}.`}>
-          tools
-          {filter.tools.length > 0 && <b> {filter.tools.length}</b>}
-        </summary>
-        <div className="tool-menu-panel">
-          {index.tools.length === 0 && <p className="empty-note">This tape has no tool calls.</p>}
-          {index.tools.length > 6 && (
-            <input
-              type="search"
-              className="tool-menu-search"
-              value={toolQuery}
-              placeholder={`filter ${index.tools.length} tool names`}
-              aria-label="Filter the list of tool names"
-              onChange={(e) => setToolQuery(e.target.value)}
-            />
-          )}
-          {index.tools.length > 0 && shown.length === 0 && (
-            <p className="empty-note">No tool name contains that.</p>
-          )}
-          {shown.map((t) => (
-            <label className="tool-opt" key={t.name}>
-              <input
-                type="checkbox"
-                checked={filter.tools.includes(t.name)}
-                onChange={() => toggleTool(t.name)}
-              />
-              <span className="tool-opt-name">{t.name}</span>
-              <span className="tool-opt-n">{fmtInt(t.count)}</span>
-            </label>
-          ))}
-        </div>
-      </details>
-
-      <div className="filter-field">
-        <label className="filter-note" htmlFor="min-chars">≥ chars</label>
-        <input
-          id="min-chars"
-          type="number"
-          min={0}
-          step={1000}
-          list="size-presets"
-          className="filter-input filter-num"
-          value={filter.minChars || ""}
-          placeholder="any size"
-          aria-label="Minimum payload size in characters. Any number; the list offers common ones."
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            onFilter({ ...filter, minChars: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0 });
+      {open && (
+        <div
+          className="popover"
+          id={id}
+          role="group"
+          aria-label="Filter steps by tool and payload size"
+          onKeyDown={(e) => {
+            if (e.key !== "Escape") return;
+            e.stopPropagation();
+            setOpen(false);
+            host.current?.querySelector("button")?.focus();
           }}
-        />
-        <datalist id="size-presets">
-          {SIZE_PRESETS.map((v) => <option value={v} key={v} />)}
-        </datalist>
-      </div>
+        >
+          <div className="popover-sec">
+            <h3 className="popover-title">Tool</h3>
+            {index.tools.length === 0 ? (
+              <p className="empty-line">This session called no tools.</p>
+            ) : (
+              <>
+                {index.tools.length > 6 && (
+                  <input
+                    type="search"
+                    className="input"
+                    value={toolQuery}
+                    placeholder={`Find one of ${index.tools.length} tool names`}
+                    aria-label="Find a tool name"
+                    onChange={(e) => setToolQuery(e.target.value)}
+                  />
+                )}
+                {shown.length === 0 && <p className="empty-line">No tool name contains that.</p>}
+                <div className="tool-opts">
+                  {shown.map((t) => (
+                    <label className="check tool-opt" key={t.name}>
+                      <input
+                        type="checkbox"
+                        checked={filter.tools.includes(t.name)}
+                        onChange={() => toggleTool(t.name)}
+                      />
+                      <span className="tool-opt-name">{t.name}</span>
+                      <span className="tool-opt-n">{fmtInt(t.count)}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
 
-      <button
-        type="button"
-        className="btn btn-sm"
-        onClick={onJumpCompaction}
-        disabled={compactions.length === 0}
-        title={
-          compactions.length
-            ? "Jump to the next context compaction"
-            : "This session was never compacted"
-        }
-      >
-        compaction{compactions.length ? ` (${compactions.length})` : "s: none"}
-      </button>
+          <div className="popover-sec">
+            <h3 className="popover-title">Payload size</h3>
+            <label className="field">
+              <span className="field-label">At least this many characters</span>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                list="size-presets"
+                className="input"
+                value={filter.minChars || ""}
+                placeholder="any size"
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  onFilter({ ...filter, minChars: Number.isFinite(v) && v > 0 ? Math.floor(v) : 0 });
+                }}
+              />
+            </label>
+            <datalist id="size-presets">
+              {SIZE_PRESETS.map((v) => <option value={v} key={v} />)}
+            </datalist>
+          </div>
 
-      <span className="spacer" />
-
-      {outOfFilter && (
-        <span className="filter-out" title="The playhead is on a step that does not match. It was left where it was rather than moved.">
-          playhead out of filter
-        </span>
+          <div className="popover-foot">
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!isActive(filter)}
+              onClick={() => onFilter(EMPTY_FILTER)}
+            >
+              Clear filters
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Done</button>
+          </div>
+        </div>
       )}
-
-      <span className="filter-count" aria-live="polite">
-        {active
-          ? `${fmtInt(matches)} of ${fmtInt(total)} match`
-          : `${fmtInt(total)} steps`}
-      </span>
-
-      {active && matches > 0 && (
-        // Where the playhead sits among the matches. Without this, pressing n
-        // on the last match does nothing and there is no way to know why.
-        <span className={"filter-pos" + (ordinal === matches ? " filter-pos-end" : "")}>
-          {ordinal === 0
-            ? "not on a match"
-            : ordinal === matches
-              ? `on match ${fmtInt(ordinal)} of ${fmtInt(matches)} · last`
-              : `on match ${fmtInt(ordinal)} of ${fmtInt(matches)}`}
-        </span>
-      )}
-
-      <button
-        type="button"
-        className="btn btn-sm"
-        onClick={() => onFilter(EMPTY_FILTER)}
-        disabled={!active}
-      >
-        Clear filter
-      </button>
     </div>
   );
 }

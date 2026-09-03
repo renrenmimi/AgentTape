@@ -3,9 +3,12 @@
 **Live: <https://agenttape.vercel.app> · Repository:
 <https://github.com/renrenmimi/AgentTape>**
 
-Nine rounds. The tool does what it was built to do, it is deployed, and the
-verification is finished. This file records where it stopped and what it does
-not do, so the next person does not have to find out.
+Ten rounds. The tool does what it was built to do, it is deployed, and the
+verification is finished. Round ten rebuilt the interface around one session
+read in order — an overview, a replay, a comparison — and moved twelve header
+statistics out of the navigation into a page where they have room to be read.
+This file records where it stopped and what it does not do, so the next person
+does not have to find out.
 
 ## What is verified, by what
 
@@ -13,19 +16,19 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 656 assertions over the parser, the redactor, the rule checker, the corpus summary and this repository's own guarantees |
+| `node verify.mjs` | 684 assertions over the parser, the redactor, the rule checker, the corpus summary and this repository's own guarantees |
 | `npm run counters` | six deliberate breakages of the assertion counting, each required to fail the counter that should catch it, plus an unmutated copy required to come back clean |
-| `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, no-helper mode, against a production build the job serves itself |
+| `npm run selftest` | the in-page suite, 371 assertions against a live DOM in a real browser, no-helper mode, against a production build the job serves itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five |
 
-The in-page job asserts three numbers — `164/168 passed · 0 failed · 4 not run
+The in-page job asserts three numbers — `367/371 passed · 0 failed · 4 not run
 here` — and the mode it ran in. Any of them moving is a red build.
 
 Every number in that table is checked against the thing it describes. The README
 said 591 while the file ran 602 once, which is the same class of wrong as a
 counter that stops early, so it is a rule now rather than a proofread.
 
-## The four things it does not do
+## The five things it does not do
 
 **Comparison aligns positionally, not by longest common subsequence.** Two runs
 are reduced to the tools they called and those lists are compared. One extra
@@ -34,10 +37,12 @@ swapped call, an insertion of one or two — and says which it found, and past
 about eight calls of drift it stops trying and says so. Full LCS alignment would
 fix that and was never attempted.
 
-**A nested subagent run shows less than a top-level one.** Round four gave it a
-playhead, a messages array and its own step detail. It does not give it the
-filter, the comparison, the assertions, the redaction export, or a descent into
-runs it delegated in turn. Two playheads on one screen is a different design.
+**A nested subagent run shows less than a top-level one.** It gets the whole
+replay — the step list, the messages array, the context view, the record data —
+from the same components the parent uses. What it does not get is the filter,
+the comparison, the checks, the redaction export, or a descent into runs it
+delegated in turn. Those belong to the run you opened, and an Export button
+inside a nested run would be ambiguous about which one it meant.
 
 **The helper mode is not covered in CI.** The suite has two frozen shapes and CI
 runs the one a runner can: no-helper, with the four helper assertions reported
@@ -54,6 +59,14 @@ The WebKit build on this machine is 2287 against a driver expecting 2336 and
 hangs on launch with no output, so it was never run. The Chromium fallback path
 was exercised by deleting `showDirectoryPicker` — which tests the code, not the
 browser.
+
+**Colour is measured; layout is not.** `scripts/contrast.mjs` resolves every
+foreground against the surface it is painted on and `verify.mjs` fails on a pair
+below its ratio, so an unreadable grey cannot ship. Nothing measures whether a
+line of text is a sensible length at 1440 px, whether the step list is scannable,
+or whether the context view reads as an explanation. Those were checked by
+looking, on a screen, at five viewport sizes and both themes — which is a
+judgement and is recorded as one.
 
 ## The two rounds when the suite was red and CI was green
 

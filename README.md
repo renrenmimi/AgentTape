@@ -8,9 +8,9 @@ transcript already sitting in `~/.claude/projects/` and shows you the messages
 array as it grew, the one step that blew up the context, the tool that failed
 and the forty minutes where nothing happened at all.
 
-![A replayed session: the counters, the timeline, and the context growth with the step that caused it](docs/replay.jpg)
+![A replayed session: the step list, and the failed tool result with the call it answers](docs/replay.jpg)
 
-*The built-in demo tape. Along the top: 31 steps, 20 turns, 43m 33s of wall clock against 1m 21s of activity, 9 tool calls, 2 errors. The band underneath is the context, and it names the step that caused the jump — +79k at step 12, dropped at the compaction thirteen steps later, but re-sent three turns first, which cost 236k of re-reading.*
+*The built-in demo tape, at the first failed tool call. The list on the left says what every step is; the panel shows the result that failed, the call it answers, and how long that call took. The overview this arrived from is one click away, and so is the context view that explains the +79k jump at step 12.*
 
 Your transcripts never leave this machine. AgentTape opens a `.jsonl` from
 `~/.claude/projects/` and parses it entirely in your browser: there is no
@@ -75,14 +75,17 @@ Structure only. The helper never reads or prints a session title — titles are
 generated from your prompts, so they leak exactly what this project exists to
 protect.
 
-The empty state has a **Look for it** button rather than probing for the helper
+**All sessions** has a **Look for it** button rather than probing for the helper
 on every load: a refused connection to a port nothing is listening on is logged
 in red by the browser before any JavaScript can catch it, and a working page
 that prints a red error looks broken. Once the helper has answered here, the
-page remembers and finds it on its own.
+page remembers and finds it on its own. Away from localhost that route says so
+and makes no request at all, because a page on another origin cannot reach
+`127.0.0.1` and telling you to start the helper anyway would be an instruction
+that cannot work.
 
-Not sure yet? Press **Load demo tape** on the empty state. It is a fictional
-run, invented end to end, with two tool failures, a context blow-up and a
+Not sure yet? Press **Try a demo**. It is a fictional run, invented end to end,
+with two tool failures, a context blow-up, a compaction, a delegated run and a
 38-minute idle gap in it.
 
 It is also live at **<https://agenttape.vercel.app>** — drag a transcript onto
@@ -133,92 +136,173 @@ rule reference is [`docs/rules.md`](docs/rules.md).
 
 ## What it shows
 
-**A timeline**, one tick per step, with the shape encoding the kind of step —
-user turn, assistant text, thinking, tool call, tool result, system — and a
-separate rail below marking failures. Colour is never the only signal.
-Underneath it runs a second axis in *real* elapsed time, so a 38-minute pause
-in the middle of a session reads as a 38-minute pause instead of being
-flattened into the next tick.
+Three views over one session, and you arrive at the first of them whichever way
+you came in.
 
-Drag the playhead, or use the keyboard. Press <kbd>?</kbd> for the whole list:
-arrows to step, `Shift` for ten at a time, `Home` / `End` for the ends, `n` /
-`p` for the next and previous failure — or match, while a filter is on — `/`
-for the search box, `c` to compare, `a` for assertions, `Esc` to close whatever
-is open.
+### Overview — what happened, and where to look
 
-**A filter bar**, because dragging is not a query. Five thousand turns is too
-many to find anything in by hand. Pick tool names from a menu that lists every
-tool in the tape with its call count; set a size threshold, so "show me what
-blew up the context" is one control; jump between compactions; or type free
-text.
+Three figures, a sentence built from the counts (`31 steps · 9 tool calls ·
+2 tool failures · 1 compaction`), and a list of **key events** that each go
+somewhere: every failed tool call, the largest observed increase in context,
+each compaction, each delegated run, the longest gap between records.
 
-Search reads the 96-character summaries the index already holds, **never the
-bodies** — reading bodies would pull the transcript back into memory and undo
-the design the rest of this is built on. The control says so, because a search
-that quietly misses matches is worse than one that states what it covers.
+The list is an index, not a summary. It ranks nothing and concludes nothing,
+because the transcript records what was said and done and not what anybody
+meant. A run with no failures in it says *no failed tool calls recorded* — the
+absence of a recorded failure, which is not the same statement as success, and
+the page does not make the second one.
 
-Matching entries are marked in the messages panel and matching steps are marked
-on the context chart, so a filter answers "where in the growth did this happen"
-as well as "where on the timeline". The bar also says where the playhead sits
-among the matches, so `n` doing nothing at the last one stops being a mystery.
+What a record is missing is stated rather than implied. A session with a
+delegated run whose file you have not opened says so on this page, because
+`isSidechain` is false on every record of a main transcript and nothing else in
+the file would tell you.
 
-Non-matching steps are **dimmed, not removed**, so the position and density of
-the run stay honest. Where the timeline is denser than the screen, the dim base
-is every step and the height of the bright bar is the share of that column that
-matched — a filtered rail is a density plot, not a blanket. A playhead that
-stops matching is left where it is and labelled, never jumped.
+**Session details** holds everything else — wall clock and active time, idle
+gaps, tokens in and out, cache reads, peak context, models, the file's own size
+and line count, the writer versions and the per-tool breakdown. It is one
+control away rather than the first thing on screen, which is the change: those
+figures used to be a strip of twelve above every other view, where they were
+navigation nobody could navigate by.
 
-**The messages array, as it stood at the playhead.** This is the centrepiece.
-Entries appear as they were added, the newest one highlighted, each showing its
-role, a one-line summary and its token cost. Assistant blocks that share a
-`message.id` are grouped into one entry, because that is one API message even
-though the transcript writes it as several lines. The list is virtualised: at
-step 2,600 of a large session the array is thousands of entries long and the
-DOM holds a few dozen of them.
+### Replay — one step at a time
 
-**A context-growth chart** under the timeline, plotting
-`input_tokens + cache_read_input_tokens` per step. It exists for one shape: a
-step pushes a large payload into the array, the line steps up, and every turn
-after it pays to re-send that payload. The largest single-step increase is
-marked and clickable. Compact boundaries are marked too, so the drop after a
-compaction reads as an event rather than a glitch.
+A list of steps on the left and one panel on the right.
 
-Marking the jump is only half an answer, so a second line says what became of
-the payload: `still in the array 18 steps later · 4 turns re-sent it · 314k of
-re-reading`, or `dropped at the compaction 28 steps later`, or — when the
-context fell and nothing in the transcript explains it — it reports the fall and
-declines to explain it. Context is one number per turn, not an inventory, so the
-index cannot prove a particular payload is still present, only that the level
-never fell back. The line says which of those it is doing.
+Every row in the list says what its step **is**, in task language: `Tool call ·
+Read`, `Tool result · Read`, `Assistant response`, `Thinking`, `Context
+compaction`. A `tool_result` carries no tool name of its own — the name is on
+the call — so the list resolves it through the pair map rather than leaving you
+to do it. That naming is a presentation layer: the record's own `type` and
+`role` are untouched underneath, and Record data shows them.
+
+The list is virtualised. At step 5,900 of a six-thousand-step session it holds
+about fifteen rows.
+
+Above it, a thirty-pixel **position rail**: one tick per step, the shape
+encoding the kind, failures marked in a different shape as well as a different
+colour, delegations flagged. It is the one thing a list is bad at — where in
+the run you are, and how the failures are distributed — and it is a strip
+rather than the eighty-four pixels of instrument it replaces.
+
+Drag it, or use the keyboard. Press <kbd>?</kbd> for the whole list: arrows to
+step, `Shift` for ten at a time, `PgUp` / `PgDn` for fifty, `Home` / `End` for
+the ends, `n` / `p` for the next and previous failure — or match, while a
+filter is on — `/` for the search box, `c` to compare, `a` for checks, `Esc` to
+close whatever is open. The list, the rail and the context chart each own their
+own arrow keys, so a key pressed in one of them moves the playhead once.
+
+The panel has three subviews, and all three stay on the step you are on.
+
+**Details** leads with the content: the tool input, or the text. Then the other
+half of the exchange, with a control that goes to it and the wall-clock time
+between the two — and four distinguishable states rather than one shrug, since
+*returned in 1.2 s*, *no result recorded*, *the result carries an error* and
+*answers the call at step 6* are four different facts. The array delta and the
+metadata are each behind a control, because they answer a second question and
+used to sit between the reader and the first one.
+
+**Context** plots `input_tokens + cache_read_input_tokens` per step, with axes
+that have units on them and a selection that moves with the keyboard. It exists
+for one shape: a step pushes a large payload into the array, the line steps up,
+and every turn after it pays to re-send that payload. The largest single-step
+increase is marked; so are compact boundaries, so the drop after one reads as
+an event rather than a glitch.
+
+Marking the increase is half an answer, so a line says what became of the
+payload: *context never fell back below that level in the 18 steps that
+followed, and 4 model turns re-sent it, 314k of re-reading*, or *the level fell
+at the compaction 28 steps later, which the writer recorded*, or — when the
+context fell and nothing explains it — it reports the fall and declines to
+explain it. Context is one number per turn, not an inventory, so the index
+cannot prove a particular payload is still present, only that the level never
+fell back; the line says which of those it is doing. It also says the increase
+was *reported* at that step rather than caused by it, because a rise recorded
+on a thinking record is a rise recorded on a thinking record.
+
+The elapsed-time axis lives here too, next to the wall-clock and active
+durations it is the picture of, so a 38-minute pause reads as a 38-minute pause
+instead of being flattened into the next tick.
+
+**Record data** shows the record in the file's own vocabulary — its `type`, its
+`role`, its place in the messages array — then the **parsed record**, which is
+this application's projection under the names it gave, and then the **raw
+record**, which is the line read back from the same bytes the index points at.
+The two names mean two different things and neither pretends to be the other: a
+session opened from a `.tape.json` has no original line and says so, rather
+than re-serialising the projection and calling it the source.
+
+The left column also has a second mode. **Messages** is the array as it stood at
+the playhead: entries appear as they were added, assistant blocks that share a
+`message.id` grouped into one entry because that is one API message even though
+the transcript writes it as several lines, each block linking back to the step
+it is. It follows the playhead unless you turn that off.
+
+**Search and filters.** Dragging is not a query, and five thousand turns is too
+many to find anything in by hand. The search box sits directly above the list it
+searches, and says what it covers: it reads the 96-character summaries the index
+already holds and **never the bodies**, because reading bodies would pull the
+transcript back into memory and undo the design the rest of this is built on. A
+search that quietly misses matches is worse than one that states what it covers.
+
+Tool names and a payload-size threshold are behind a **Filters** control, and
+whatever is in force is a row of chips that is always on screen with a way to
+take each one off. Non-matching steps are **dimmed, not removed**, so the
+position and density of the run stay honest. Where the rail is denser than the
+screen, the dim base is every step and the height of the bright bar is the share
+of that column that matched — a filtered rail is a density plot, not a blanket.
+A playhead that stops matching is left where it is and labelled, never jumped.
+A filter that matches nothing says *No matching steps*, says how many steps the
+session still has, and leaves the panel you were reading alone.
 
 **Delegated work.** When a session hands a job to a subagent with the `Agent`
 tool, the transcript keeps the call and the summary that came back; everything
-the subagent did is in a separate file. `isSidechain` is `false` on every record
-of a main transcript, so nothing in the file tells you work is missing — in the
-largest session this was built against, a quarter of all tool calls were
-invisible. Delegated steps now have their own shape on the rail, the header
-counts them, and the step says in words that the work exists and is not here.
-Drop the `agent-*.jsonl` files alongside the transcript, or open the session
-through the helper, and each delegated run appears nested inside the step that
-started it. Step into one and you get the workbench again pointed at the
-subagent's own tape — its timeline, its messages, its bodies. One delegated run
-in the corpus this was built against makes 130 tool calls; that is a session,
-not a footnote.
+the subagent did is in a separate file. In the largest session this was built
+against, a quarter of all tool calls were invisible. Delegated steps are flagged
+in the list, the overview counts them, and the step says in words that the work
+exists and is not here. Drop the `agent-*.jsonl` files alongside the transcript,
+or open the session through the helper, and the run attaches to the call it
+belongs to — exactly when there is a sidecar to say so, and by the window
+between the call and its result when there is not, which the panel reports as
+the evidence it is. Open one and you get the replay again pointed at the
+subagent's own tape, with a breadcrumb and a way back to the parent step. One
+delegated run in the corpus this was built against makes 130 tool calls; that is
+a session, not a footnote.
 
-Drops are taken at any time, not only from the empty state. A subagent file
-pairs into the run on screen; a transcript asks whether to open it or compare
-with it.
+Drops are taken at any time, not only on the landing page. A subagent file pairs
+into the run on screen; a transcript asks whether to open it or compare with it.
 
-**Comparing two runs.** Load a second tape and find where the two stopped
-agreeing. Alignment is by tool-call sequence and the rule is printed above the
-result; the divergence is marked on both rails, which share one scale so a
-shorter run stops short instead of being stretched to match.
+### Compare — two runs, and what is actually being compared
 
-**Assertions, in the app and in CI.** State what a run was supposed to do —
-`Grep happens before Write`, `context never exceeds 200,000 tokens`, `no tool is
-called more than five times in a row`, `no tool call takes longer than 120
-seconds`, `the run ends without an error` — and the panel reports each one with
-the offending step linked.
+A view of its own rather than a modal over a workbench you cannot see, so run A
+stays open behind it and coming back does not reload anything.
+
+Each run is reduced to the tools it called, in order, and those two lists are
+compared. **Message contents are not compared** — two runs of the same task
+differ in almost every word, so comparing text answers "they diverged at step 2"
+every time. The cost of that rule is that alignment is positional: one extra
+call early in a run shifts everything after it, and the panel says so out loud
+rather than presenting a shift as a fork. The divergence is marked on both
+rails, which share one scale so a shorter run stops short instead of being
+stretched to match.
+
+## Checks
+
+State what a run was supposed to do — `Grep happens before Write`, `context
+never exceeds 200,000 tokens`, `no tool is called more than five times in a
+row`, `no tool call takes longer than 120 seconds`, `the run ends without an
+error` — and each one is reported with the offending step linked.
+
+Three outcomes, not two. **Passed** is only for a check that had something to
+check; a check with nothing to check — no call to the tool it names, no context
+figures at all — is **not evaluated**, because "nothing violated this" and "this
+was never tested" are different facts and the second dressed as the first is how
+a suite stops meaning anything. And passing is a statement about the conditions
+you set, not about whether the session did the right thing; the panel says that
+in its own words.
+
+Results first, editing behind a control. Loading a rule set that has problems in
+it replaces nothing until you say so, so a typo in rule three does not cost you
+rules four through nine.
 
 Save the set and it leaves the browser:
 
@@ -236,41 +320,56 @@ breaks all five.
 Every rule reads the index and none reads a body, so a redacted tape can be
 asserted against exactly as well as the transcript it came from.
 
-**A report you can paste.** One button produces Markdown: the counts, the tool
-breakdown, every failure with its step number, the context profile as a
-sparkline, the compactions, the delegated runs and any assertion that did not
-hold. Structure and numbers only — no message text — so it is safe to paste into
-an issue by construction rather than by care.
+## Export
 
-**Tool call detail** — the input, the matched result, whether it errored, and
-the wall-clock time between the two.
+Two actions, each named for what it does rather than for the noun it produces.
 
-**An array delta**, because the timeline and the messages panel both answer
-"what does the array look like now" and neither answers "what did this step put
-in it". Four lines: which entry was appended and its role, the characters and
-output tokens it carried, context before and after with a signed difference,
-and the running totals. Signed, because a compaction makes it negative and a
-readout that showed 97k → 18k as a gain would be lying about the one event you
-most need to see.
+**Copy Markdown summary** puts the counts, the tool breakdown, every failure
+with its step number, the context profile as a sparkline, the compactions, the
+delegated runs and any check that did not hold on the clipboard. Structure and
+numbers only — no message text — so it is safe to paste into an issue by
+construction rather than by care. If the browser refuses clipboard access the
+text is shown for you to copy, rather than a toast claiming a copy that did not
+happen.
 
-**A session summary** — steps, turns, wall-clock and active duration, tool
-calls by name, errors, tokens in and out, peak context, models used. Wall-clock
-and active sit side by side deliberately: real sessions get resumed over days.
-Across the forty sessions on the machine this was built on, 99% of elapsed time
-inside a session is idle.
+**Download redacted tape** is described below.
 
-**Every session at once.** With the helper running, a sortable table of all of
-them — steps, tool calls, errors, wall and active time, peak context, whether
-they compacted, whether they delegated — with a context sparkline per row on one
-shared scale, so the session that went badly is visible without opening
-anything. Click through to open one.
+## Every session at once
+
+**All sessions** is a table of the sessions from a folder you grant this page
+access to, or from the local helper: steps, tool failures and active time by
+default, with tool calls, wall clock, peak context, compactions, delegations,
+size and a context sparkline available from a **Columns** control or by
+expanding a row. Sparklines share one vertical scale, so the session that grew
+the most context is the tallest line. Click through to open one; the session you
+already had open is still open behind it.
 
 There is no title column and no first message. Both are written from prompts. A
 session there is a project directory, an id and a clock.
 
+## Colour, and how it is checked
+
+Every colour in the interface is a role in one token file, and every pair that
+carries text is measured against the surface it is actually painted on:
+
+```bash
+node scripts/contrast.mjs
+```
+
+88 pairs, body text held to 4.5:1 and control edges and graph marks to 3:1, in
+both themes. `node verify.mjs` runs the same measurement, and refuses a hex
+value or an `opacity` dim in a component style — either is a colour no
+measurement can find, which is how an unreadable grey survives a review.
+
+Light is the default for a first visitor and dark is a choice, alongside
+*system*, which keeps tracking the operating system for as long as it is
+selected. A preference already stored on your machine still wins over the
+default.
+
+
 ## Redaction
 
-**Export redacted tape** produces a `.tape.json` that is safe to attach to a
+**Download redacted tape** produces a `.tape.json` that is safe to attach to a
 GitHub issue. It keeps step order, roles, tool names, timings, token counts,
 error flags, block types and the *length in characters* of every body. It
 replaces every text body, tool input, tool result, file path and URL with a
@@ -353,12 +452,12 @@ Every push, on every pull request:
 
 | | |
 | --- | --- |
-| `node verify.mjs` | 656 assertions over the parser, the redactor, the checker and this repository's own guarantees |
+| `node verify.mjs` | 684 assertions over the parser, the redactor, the checker and this repository's own guarantees |
 | `npm run counters` | six self-inflicted breakages of the assertion counting, each required to be caught by the counter that should catch it, plus an unmutated copy required to come back clean |
-| `npm run selftest` | the in-page suite, 168 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
+| `npm run selftest` | the in-page suite, 371 assertions against a live DOM in a real browser, in no-helper mode, against a production build the job served itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five, so the non-zero exit is demonstrated rather than described |
 
-The in-page job asserts three numbers, not one — `164/168 passed · 0 failed ·
+The in-page job asserts three numbers, not one — `367/371 passed · 0 failed ·
 4 not run here` — and that it ran in the mode it asked for. Any of those moving
 is a red build. It takes about fourteen seconds on a runner.
 
@@ -482,12 +581,12 @@ panel detects the common shapes — a swapped call, an insertion of one or two �
 and says which it found, but past about eight calls of drift it stops trying and
 says so. Only the first divergence is reported; there may be later ones.
 
-**A nested subagent run shows less than a top-level one.** You get its shape,
-its step count, its tools, its failures, its tokens and its wall clock. You do
-not get a playhead of its own, a messages array, body text, filtering, or the
-runs it delegated in turn. Open the file as a transcript in its own right for
-those. Two playheads on one screen is a different design and this round did not
-attempt it.
+**A nested subagent run shows less than a top-level one.** You get the replay:
+its own step list, its messages array, its bodies, its context view and its
+record data, all from the same components the parent uses. What you do not get
+is the things that belong to the run you opened — the filter, the comparison,
+the checks, the redaction export — and you do not get the runs *it* delegated in
+turn. Open one of those as a transcript in its own right.
 
 **A subagent file without its sidecar is paired by time.** The `.meta.json`
 beside each run carries the id of the call that started it and is exact. Nothing
@@ -517,10 +616,10 @@ on the largest fixture, every surviving run of twelve characters is a tool name,
 a JSON seam, or the export's own documentation prose, and none is in the
 structural residue.
 
-**A nested run is not the whole workbench.** Stepping into a delegated run gives
+**A nested run is not the whole workbench.** Opening a delegated run gives
 you its timeline, its messages and its bodies. It does not give you the filter,
 the comparison, the assertions or the redaction export — those belong to the run
-you opened — and it does not descend into runs that run delegated in turn.
+you opened — and it does not descend into runs it delegated in turn.
 
 **Cross-session statistics come from the helper, or from a folder you grant.**
 The table of every session is built either by the local helper walking
@@ -580,7 +679,7 @@ in CI now, and what it asserts is the DOM: that a tick was painted, that a word
 appears, that focus moved, that the messages panel stayed virtualised. It cannot
 tell you whether the timeline is *legible*, whether the attribution line reads
 as an explanation, or whether the comparison's caveat is understood. Four of its
-168 assertions need the local helper and are marked *not run here* on a runner —
+371 assertions need the local helper and are marked *not run here* on a runner —
 counted in the denominator, outside the pass count, so their absence is visible
 rather than assumed.
 
@@ -588,7 +687,7 @@ rather than assumed.
 <https://agenttape.vercel.app>. On a host that is not localhost the page never
 attempts a `127.0.0.1` request at all, so the session list, opening a session by
 row, and the helper-walked overview are gone; drag-and-drop, the demo, the
-workbench, the filter, the comparison, the assertions, the redacted export, the
+replay, the filter, the comparison, the checks, the redacted export, the
 report and `/format` all work, as does the folder-granted overview. Measured
 against a production build served from a non-localhost origin, where the only
 host contacted was the origin itself. [`docs/deploy.md`](docs/deploy.md)
@@ -642,13 +741,14 @@ still out, because "not yet" without a reason is just a wish.
 
 ```
 app/       the Next.js app — no UI library, no CSS framework, no state library
+           tokens.css is every colour in it, once, by role
 lib/       parser, tape container, redactor, summary, filter, step delta,
-           subagents, comparison, assertions, session statistics, report
+           key events, step names, subagents, comparison, rule checker,
+           session statistics, report
 fixtures/  invented runs and a rule set, so CI can check itself
-docs/      the transcript format, and the rule-set format
-bin/       the local helper
-docs/      what the transcript format actually is
-scripts/   builds the demo tape
+bin/       the local helper and the command line
+docs/      what the transcript format actually is, and the rule-set format
+scripts/   builds the demo tape, measures the palette, breaks the counters
 verify.mjs static checks
 ```
 

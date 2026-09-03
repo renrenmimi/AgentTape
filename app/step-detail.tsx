@@ -1,28 +1,29 @@
 "use client";
 
-// What is under the playhead, in full.
+// The Details subview: what this step is, and what it carried.
 //
-// Bodies are fetched here and nowhere else. A body can be 1.34 MB — the
-// largest single line in the probe fixtures — so it is read asynchronously
-// from the source Blob and then revealed in bounded windows. "Show all" on a
-// megabyte of tool output would put a megabyte of text nodes into the DOM and
-// stall the tab, so past a quarter of a megabyte the offer changes to a
-// download instead.
+// The order is the order somebody reads in. What the step is, then its
+// content — the tool input, or the text — then the other half of the exchange
+// when there is one, then the accounting. The array delta and the metadata are
+// under a control each, because they are the answers to a second question and
+// were previously between the reader and the first one.
+//
+// Pairing is stated in four distinguishable ways, because they are four
+// different situations: this call returned in 1.2 s · this call has no
+// recorded result · this call's result failed · this result answers the call
+// at step 6. A single "not found" for the middle two was the old behaviour and
+// it hid a cut-off run inside a shrug.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BODY_WINDOW, INLINE_BODY_LIMIT, type Step, type StepBody, type Tape } from "@/lib/format";
+import type { Step, StepBody, Tape } from "@/lib/format";
 import { fmtBytes, fmtClock, fmtDate, fmtDuration, fmtInt, fmtTokens } from "@/lib/summary";
 import { cumulativeChars, deltaAt } from "@/lib/delta";
+import { stepKindLabel } from "@/lib/labels";
 import type { Delegation } from "@/lib/subagents";
 import NestedRun from "./nested-run";
-import { KIND_LABEL } from "./glyphs";
+import { BodyView } from "./body-view";
+import { CrossIcon, WarnIcon } from "./icons";
 
-const HUGE = 262144; // above this, offer a download rather than a reveal
-// Revealed text is emitted in blocks rather than as one text node. A single
-// 165k-character node inside a wrapping <pre> costs Chrome a 400 ms layout;
-// blocks with content-visibility skip layout entirely while off screen. Splits
-// land on newlines so the wrapping is identical to one unbroken node.
-const CHUNK_CHARS = 4000;
 const SETTLE_MS = 120; // how long the playhead must sit still before a body is read
 
 type Props = {
@@ -30,18 +31,15 @@ type Props = {
   curStep: number;
   pairs: Map<number, number>;
   onSelectStep: (globalIndex: number) => void;
-  /** What to call a step on screen — its position in the visible view. */
   shownIndex: (globalIndex: number) => number;
-  /** Set when this step handed its work to a subagent. */
   delegation: Delegation | null;
   onLoadSubagent: (() => void) | null;
   subLoading: boolean;
   subError: string;
   offeredBytes: number;
-  /** True when the playhead is on a step the active filter excludes. */
-  outOfFilter: boolean;
-  /** Open a loaded delegated run and step through it. */
   onEnterSubagent?: () => void;
+  /** Set on a nested run, where the parent's routes do not apply. */
+  nested?: boolean;
 };
 
 /** Signed, so a context drop across a compaction reads as a drop. */
@@ -52,100 +50,35 @@ function durationBetween(a: Step, b: Step): number {
   return b.t - a.t;
 }
 
-function BodyView({ body, title, step }: { body: StepBody | null; title: string; step: Step }) {
-  const [shown, setShown] = useState(INLINE_BODY_LIMIT);
-
-  useEffect(() => { setShown(INLINE_BODY_LIMIT); }, [step.i]);
-
-  const text = body?.text ?? "";
-  const chunks = useMemo(() => {
-    const visible = text.slice(0, shown);
-    const out: string[] = [];
-    let at = 0;
-    while (at < visible.length) {
-      const hard = Math.min(visible.length, at + CHUNK_CHARS);
-      // Prefer the last newline inside the window so the blocks line up with
-      // the text's own lines. A body with no newlines in it at all — a
-      // minified payload, a single JSON blob — is split at the hard boundary
-      // instead; the text already wraps at arbitrary points, so the seam is
-      // not visible, and without it the whole body lands in one block and the
-      // opt-out below does nothing.
-      let end = hard;
-      if (hard < visible.length) {
-        const nl = visible.lastIndexOf("\n", hard);
-        if (nl > at) end = nl + 1;
-      }
-      out.push(visible.slice(at, end));
-      at = end;
-    }
-    return out;
-  }, [text, shown]);
-
-  if (!body) return <p className="placeholder">reading…</p>;
-
-  if (body.placeholder) {
-    return (
-      <p className="placeholder">
-        {step.preview || "[redacted]"} — this tape carries structure only, so the body was
-        never written into it.
-      </p>
-    );
-  }
-
-  if (!text) {
-    if (body.parts.length) {
-      return (
-        <p className="placeholder">
-          {body.parts.map((p) => `${p.type} · ${fmtBytes(p.chars)}`).join("  ·  ")}
-          {" — not decoded"}
-        </p>
-      );
-    }
-    return <p className="placeholder">empty</p>;
-  }
-
-  const remaining = text.length - shown;
-  const download = () => {
-    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `step-${step.i + 1}-${title.replace(/\W+/g, "-")}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
+function Disclosure({
+  title, hint, children, open, onToggle,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <>
-      <pre className={"body" + (shown > INLINE_BODY_LIMIT ? " tall" : "")}>
-        {chunks.map((c, i) => (
-          <span className="body-chunk" key={i}>{c}</span>
-        ))}
-        {remaining > 0 ? "\n…" : ""}
-      </pre>
-      {remaining > 0 && (
-        <div className="body-more">
-          <span>{fmtInt(remaining)} more characters</span>
-          <button type="button" className="btn btn-sm" onClick={() => setShown((s) => s + BODY_WINDOW)}>
-            Show {fmtBytes(Math.min(BODY_WINDOW, remaining))} more
-          </button>
-          {remaining <= HUGE ? (
-            <button type="button" className="btn btn-sm" onClick={() => setShown(text.length)}>
-              Show all
-            </button>
-          ) : (
-            <button type="button" className="btn btn-sm" onClick={download}>
-              Download {fmtBytes(text.length)}
-            </button>
-          )}
-        </div>
-      )}
-    </>
+    <div className="sec sec-fold">
+      <button
+        type="button"
+        className="details-toggle details-toggle-sm"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="details-caret" aria-hidden>{open ? "−" : "+"}</span>
+        <span>{title}</span>
+        {hint && <span className="details-hint">{hint}</span>}
+      </button>
+      {open && <div className="fold-body">{children}</div>}
+    </div>
   );
 }
 
 export default function StepDetail({
   tape, curStep, pairs, onSelectStep, shownIndex,
-  delegation, onLoadSubagent, subLoading, subError, offeredBytes, outOfFilter, onEnterSubagent,
+  delegation, onLoadSubagent, subLoading, subError, offeredBytes, onEnterSubagent, nested,
 }: Props) {
   const steps = tape.steps;
   const step = steps[curStep];
@@ -153,6 +86,8 @@ export default function StepDetail({
   const delta = deltaAt(steps, cum, curStep);
   const [body, setBody] = useState<StepBody | null>(null);
   const [mateBody, setMateBody] = useState<StepBody | null>(null);
+  const [showDelta, setShowDelta] = useState(false);
+  const [showMeta, setShowMeta] = useState(false);
   const token = useRef(0);
 
   const mateIdx = step ? pairs.get(step.i) : undefined;
@@ -179,10 +114,9 @@ export default function StepDetail({
 
   if (!step) {
     return (
-      <section className="pane" aria-label="Step detail">
-        <div className="pane-head"><h2>Step</h2></div>
-        <div className="pane-body"><p className="empty-note" style={{ padding: 14 }}>No step selected.</p></div>
-      </section>
+      <div className="pane-body">
+        <p className="empty-line">No step selected.</p>
+      </div>
     );
   }
 
@@ -191,180 +125,191 @@ export default function StepDetail({
   const isCall = step.kind === "tool-call";
   const isResult = step.kind === "tool-result";
   const pairDur = mate ? Math.abs(durationBetween(isCall ? step : mate, isCall ? mate : step)) : 0;
+  const mateFailed = mate ? (isCall ? mate.err : step.err) : false;
 
   return (
-    <section className="pane" aria-label="Step detail">
-      <div className="pane-head">
-        <h2>Step {fmtInt(shownIndex(step.i) || step.i + 1)}</h2>
-        <span className="spacer" />
-        <span className="entry-tok">
-          {tape.meta.source === "jsonl"
-            ? `line ${fmtInt(step.line)} · ${fmtBytes(step.len)}`
-            : `entry ${fmtInt(step.entry + 1)}`}
-        </span>
-      </div>
-      <div className="pane-body">
-        <div className="detail">
-          <div className="d-title">
-            <span className="d-kind">{KIND_LABEL[step.kind]}</span>
-            {step.tool && <b>{step.tool}</b>}
-            {step.err && <span className="d-flag">{step.errWhy || "failed"}</span>}
-            {delegation && <span className="d-kind d-kind-accent">delegated</span>}
-            {outOfFilter && <span className="d-out">out of filter</span>}
-          </div>
+    <div className="pane-body">
+      {step.err && (
+        <p className="note note-error" role="status">
+          <CrossIcon />
+          <span className="note-text">
+            This step failed — {step.errWhy || "the record carries an error flag with no reason"}.
+          </span>
+        </p>
+      )}
 
-          <div className="d-row">
-            <span>when</span>
-            <span className="d-val">
-              {step.ts === null ? "no timestamp" : `${fmtDate(step.t)} ${fmtClock(step.t)}`}
-              {sincePrev > 0 && (
-                <span style={{ color: "var(--text-3)" }}> · +{fmtDuration(sincePrev)} since previous</span>
-              )}
-            </span>
-          </div>
+      <section className="sec">
+        <h3 className="sec-title">
+          {isCall ? "Tool input" : isResult ? "Tool result" : "Content"}
+          <span className="sec-count">{fmtInt(step.chars)} characters</span>
+        </h3>
+        <BodyView
+          body={body}
+          name={step.tool || step.kind}
+          stepIndex={step.i}
+          preview={step.preview}
+        />
+      </section>
 
-          <div className="d-row">
-            <span>record</span>
-            <span className="d-val">
-              {step.rawType}
-              {step.role ? ` · ${step.role}` : ""}
-              {step.model ? ` · ${step.model}` : ""}
-            </span>
-          </div>
-
-          {step.usage && (
-            <div className="d-row">
-              <span>tokens</span>
-              <span className="d-val">
-                in {fmtTokens(step.usage.input)} · out {fmtTokens(step.usage.output)} ·
-                {" "}cache read {fmtTokens(step.usage.cacheRead)} · write {fmtTokens(step.usage.cacheCreate)}
-              </span>
-            </div>
-          )}
-
-          <div className="d-row">
-            <span>context</span>
-            <span className="d-val">{fmtTokens(step.ctx)} tokens in the array here</span>
-          </div>
-
-          {step.compact && (
-            <div className="d-row">
-              <span>compaction</span>
-              <span className="d-val">
-                {fmtTokens(step.compact.pre)} → {fmtTokens(step.compact.post)} ·
-                {" "}{fmtTokens(step.compact.dropped)} dropped · trigger {step.compact.trigger}
-              </span>
-            </div>
-          )}
-
-          {(isCall || isResult) && (
-            <div className="d-row">
-              <span>{isCall ? "result" : "call"}</span>
-              <span className="d-val">
-                {mate ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => onSelectStep(mate.i)}
-                    >
-                      go to step {fmtInt(shownIndex(mate.i) || mate.i + 1)}
-                    </button>
-                    {pairDur > 0 && (
-                      <span style={{ marginLeft: 8, color: "var(--text-3)" }}>
-                        took {fmtDuration(pairDur)}
-                      </span>
-                    )}
-                    {(isCall ? mate.err : step.err) && (
-                      <span style={{ marginLeft: 8, color: "var(--risk)" }}>errored</span>
-                    )}
-                  </>
-                ) : (
-                  <span style={{ color: "var(--text-3)" }}>not found in this transcript</span>
+      {(isCall || isResult) && (
+        <section className="sec">
+          <h3 className="sec-title">
+            {isCall ? "Result" : "The call this answers"}
+          </h3>
+          {mate ? (
+            <>
+              <p className="pair-line">
+                <button type="button" className="btn btn-sm" onClick={() => onSelectStep(mate.i)}>
+                  Go to step {fmtInt(shownIndex(mate.i) || mate.i + 1)}
+                </button>
+                {pairDur > 0 && (
+                  <span className="pair-meta">took {fmtDuration(pairDur)}</span>
                 )}
-              </span>
-            </div>
-          )}
-
-          {delegation && (
-            <NestedRun
-              delegation={delegation}
-              onLoad={onLoadSubagent}
-              loading={subLoading}
-              error={subError}
-              offeredBytes={offeredBytes}
-              onEnter={() => onEnterSubagent?.()}
-            />
-          )}
-
-          {delta && (
-            <div className="delta" aria-label="What this step added to the messages array">
-              <span className="eyebrow">array delta</span>
-              <dl>
-                <dt>appended</dt>
-                <dd>
-                  {delta.entry < 0 ? (
-                    <span className="delta-dim">nothing — this record is not part of the array</span>
-                  ) : delta.newEntry ? (
-                    <>entry {fmtInt(delta.entry + 1)}<span className="delta-dim"> · {delta.role}</span></>
-                  ) : (
-                    <>
-                      <span className="delta-dim">a block to entry </span>
-                      {fmtInt(delta.entry + 1)}
-                    </>
-                  )}
-                </dd>
-
-                <dt>carried</dt>
-                <dd>
-                  {fmtInt(delta.chars)}<span className="delta-dim"> chars</span>
-                  {delta.output > 0 && (
-                    <>{" · "}{fmtTokens(delta.output)}<span className="delta-dim"> out</span></>
-                  )}
-                </dd>
-
-                <dt>context</dt>
-                <dd>
-                  {fmtTokens(delta.ctxBefore)} → {fmtTokens(delta.ctxAfter)}
-                  {delta.ctxDelta !== 0 && (
-                    <b className={delta.ctxDelta > 0 ? "delta-up" : "delta-down"}>
-                      {" "}{signed(delta.ctxDelta)}
-                    </b>
-                  )}
-                </dd>
-
-                <dt>array now</dt>
-                <dd>
-                  {fmtInt(Math.max(0, delta.entriesSoFar))}<span className="delta-dim"> entries · </span>
-                  {fmtInt(delta.charsSoFar)}<span className="delta-dim"> chars</span>
-                </dd>
-              </dl>
-            </div>
-          )}
-
-          <div className="d-sec">
-            <div className="d-sec-head">
-              <span className="eyebrow">
-                {isCall ? "tool input" : isResult ? "tool result" : "body"}
-              </span>
-              <span className="spacer" />
-              <span className="entry-tok">{fmtInt(step.chars)} characters</span>
-            </div>
-            <BodyView body={body} title={step.tool || step.kind} step={step} />
-          </div>
-
-          {mate && (isCall || isResult) && (
-            <div className="d-sec">
-              <div className="d-sec-head">
-                <span className="eyebrow">{isCall ? "tool result" : "tool input"}</span>
-                <span className="spacer" />
-                <span className="entry-tok">{fmtInt(mate.chars)} characters</span>
+                <span className={"pair-state" + (mateFailed ? " pair-state-bad" : "")}>
+                  {mateFailed ? "the result carries an error" : "returned without an error flag"}
+                </span>
+              </p>
+              <div className="sec-sub">
+                <h4 className="sec-subtitle">
+                  {isCall ? "What came back" : "What was sent"}
+                  <span className="sec-count">{fmtInt(mate.chars)} characters</span>
+                </h4>
+                <BodyView
+                  body={mateBody}
+                  name={mate.tool || mate.kind}
+                  stepIndex={mate.i}
+                  preview={mate.preview}
+                />
               </div>
-              <BodyView body={mateBody} title={mate.tool || mate.kind} step={mate} />
-            </div>
+            </>
+          ) : isCall ? (
+            <p className="note note-warning">
+              <WarnIcon />
+              <span className="note-text">
+                No result for this call is recorded in this transcript. Either the run was cut off
+                before it returned, or the answer is in a file this one does not contain.
+              </span>
+            </p>
+          ) : (
+            <p className="note note-warning">
+              <WarnIcon />
+              <span className="note-text">
+                No matching call for this result is recorded in this transcript.
+              </span>
+            </p>
           )}
-        </div>
-      </div>
-    </section>
+        </section>
+      )}
+
+      {delegation && (
+        <NestedRun
+          delegation={delegation}
+          onLoad={onLoadSubagent}
+          loading={subLoading}
+          error={subError}
+          offeredBytes={offeredBytes}
+          onEnter={() => onEnterSubagent?.()}
+          nested={!!nested}
+        />
+      )}
+
+      {delta && (
+        <Disclosure
+          title="Message array change"
+          hint="what this step put in the array, and what it cost"
+          open={showDelta}
+          onToggle={() => setShowDelta((v) => !v)}
+        >
+          <dl className="facts">
+            <dt>Appended</dt>
+            <dd>
+              {delta.entry < 0 ? (
+                <span className="dim">nothing — this record is not part of the array</span>
+              ) : delta.newEntry ? (
+                <>entry {fmtInt(delta.entry + 1)}<span className="dim"> · a new {delta.role} message</span></>
+              ) : (
+                <>a block to entry {fmtInt(delta.entry + 1)}</>
+              )}
+            </dd>
+            <dt>Carried</dt>
+            <dd>
+              {fmtInt(delta.chars)}<span className="dim"> characters</span>
+              {delta.output > 0 && (
+                <>{" · "}{fmtTokens(delta.output)}<span className="dim"> output tokens</span></>
+              )}
+            </dd>
+            <dt>Context</dt>
+            <dd>
+              {fmtTokens(delta.ctxBefore)} → {fmtTokens(delta.ctxAfter)}
+              {delta.ctxDelta !== 0 && (
+                <b className={delta.ctxDelta > 0 ? "delta-up" : "delta-down"}>
+                  {" "}{signed(delta.ctxDelta)}
+                </b>
+              )}
+            </dd>
+            <dt>Array so far</dt>
+            <dd>
+              {fmtInt(Math.max(0, delta.entriesSoFar))}<span className="dim"> entries · </span>
+              {fmtInt(delta.charsSoFar)}<span className="dim"> characters</span>
+            </dd>
+          </dl>
+        </Disclosure>
+      )}
+
+      <Disclosure
+        title="Metadata"
+        hint="timing, tokens, model"
+        open={showMeta}
+        onToggle={() => setShowMeta((v) => !v)}
+      >
+        <dl className="facts">
+          <dt>When</dt>
+          <dd>
+            {step.ts === null
+              ? "this record carries no timestamp"
+              : `${fmtDate(step.t)} ${fmtClock(step.t)}`}
+            {sincePrev > 0 && (
+              <span className="dim"> · {fmtDuration(sincePrev)} after the previous step</span>
+            )}
+          </dd>
+          <dt>Kind</dt>
+          <dd>{stepKindLabel(step)}{step.tool ? ` · ${step.tool}` : ""}</dd>
+          {step.model && (<><dt>Model</dt><dd>{step.model}</dd></>)}
+          <dt>Tokens</dt>
+          <dd>
+            {step.usage ? (
+              <>
+                in {fmtTokens(step.usage.input)} · out {fmtTokens(step.usage.output)} · cache read{" "}
+                {fmtTokens(step.usage.cacheRead)} · cache write {fmtTokens(step.usage.cacheCreate)}
+              </>
+            ) : (
+              <span className="dim">this record carries no usage — unknown, not zero</span>
+            )}
+          </dd>
+          <dt>Context here</dt>
+          <dd>
+            {step.ctx
+              ? <>{fmtTokens(step.ctx)} tokens in the array</>
+              : <span className="dim">unknown</span>}
+          </dd>
+          {step.compact && (
+            <>
+              <dt>Compaction</dt>
+              <dd>
+                {fmtTokens(step.compact.pre)} → {fmtTokens(step.compact.post)} ·{" "}
+                {fmtTokens(step.compact.dropped)} dropped
+                {step.compact.trigger ? ` · trigger ${step.compact.trigger}` : ""}
+              </dd>
+            </>
+          )}
+          <dt>In the file</dt>
+          <dd>
+            {tape.meta.source === "jsonl"
+              ? <>line {fmtInt(step.line)} · {fmtBytes(step.len)}</>
+              : <>tape entry {fmtInt(step.i + 1)}</>}
+          </dd>
+        </dl>
+      </Disclosure>
+    </div>
   );
 }

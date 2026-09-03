@@ -126,13 +126,36 @@ export type TapeMeta = {
 /**
  * A loaded run. `body(i)` is async because a raw transcript keeps its bodies
  * on disk; a .tape.json resolves them from memory (or to a placeholder).
+ *
+ * `raw(i)` is the line exactly as the file wrote it, read back from the same
+ * Blob at the same offsets. It exists so that "Raw record" in the interface
+ * can mean the raw record. A tape built from a .tape.json has no original
+ * line and returns null, which the interface says out loud rather than
+ * printing a re-serialised projection and calling it the source.
  */
 export type Tape = {
   meta: TapeMeta;
   steps: Step[];
   entries: Entry[];
   body: (i: number) => Promise<StepBody>;
+  raw: (i: number) => Promise<RawRecord | null>;
 };
+
+/** One transcript line, as bytes on disk turned back into text. */
+export type RawRecord = {
+  /** The line, truncated to RAW_RECORD_LIMIT characters. */
+  text: string;
+  /** Characters in the whole line, before any truncation. */
+  chars: number;
+  /** Bytes the line occupies in the file. */
+  bytes: number;
+  line: number;
+  truncated: boolean;
+};
+
+/** A single transcript line reaches 1.34 MB in the probe fixtures. Reading one
+ *  back is fine; putting one in the DOM is not. */
+export const RAW_RECORD_LIMIT = 24576;
 
 /** The full payload of one step, fetched on demand. */
 export type StepBody = {

@@ -2,26 +2,28 @@
 
 // The messages array, as it stood at the playhead.
 //
-// This is AgentLab's "watch the array grow" panel pointed at a real run. Rows
-// are messages-array entries — assistant blocks sharing a message.id are one
+// The second mode of the left column, and not a chat log. Rows are
+// messages-array *entries*: assistant blocks that share a `message.id` are one
 // entry, because that is one API message even though the transcript writes it
-// as several lines. Only entries that existed at the playhead are rendered.
+// as several lines. That grouping is the whole point of this panel and is why
+// it is not simply the step list with different labels.
 //
-// The list is virtualised against a prefix-sum of row heights. Heights are
-// computed rather than measured: a collapsed row is a fixed header, and an
-// expanded row is that header plus one fixed-height line per block. That keeps
-// the arithmetic exact with no measure-then-reflow pass, which matters because
-// fixture C reaches ~5,400 entries.
+// Only entries that existed at the playhead are rendered, so stepping forward
+// grows the array in front of you. The list is virtualised against a prefix
+// sum of row heights, computed rather than measured: a collapsed row is a
+// fixed header and an expanded one is that header plus a fixed line per block,
+// which keeps the arithmetic exact with no reflow pass. Fixture C reaches
+// ~5,400 entries.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Entry, Step } from "@/lib/format";
 import { fmtInt, fmtTokens } from "@/lib/summary";
-import { KIND_LABEL } from "./glyphs";
+import { stepLabel } from "@/lib/labels";
 
-const HEAD = 36;
+const HEAD = 54;
 const GAP = 6;
-const BLK = 22;
-const BLK_PAD = 9;
+const BLK = 38;
+const BLK_PAD = 8;
 const OVER = 400; // px of overscan above and below the viewport
 
 type Props = {
@@ -33,14 +35,21 @@ type Props = {
   shownIndex: (globalIndex: number) => number;
   /** One byte per entry: 1 when a step in it matches the active filter. */
   entryHits: Uint8Array | null;
+  /** The tool a step belongs to, following a result back to its call. */
+  toolOf: (globalIndex: number) => string;
+  /** Which entries the reader has opened. Held by the owner so switching views
+   *  and coming back does not close them all. */
+  open: Set<number>;
+  onOpen: (next: Set<number>) => void;
+  follow: boolean;
+  onFollow: (v: boolean) => void;
 };
 
 export default function MessagesPanel({
-  entries, steps, curStep, redacted, onSelectStep, shownIndex, entryHits,
+  entries, steps, curStep, redacted, onSelectStep, shownIndex, entryHits, toolOf,
+  open, onOpen, follow, onFollow,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState<Set<number>>(() => new Set());
-  const [follow, setFollow] = useState(true);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewH, setViewH] = useState(600);
   const raf = useRef(0);
@@ -60,9 +69,9 @@ export default function MessagesPanel({
     [entries, open, curEntry],
   );
 
-  // The buffer is allocated once per tape and refilled in place. Allocating a
-  // fresh one per playhead move is 43 KB of garbage a frame on a large tape,
-  // which shows up as a collection pause in the middle of a drag.
+  // The buffer is allocated once per tape and refilled in place. A fresh one
+  // per playhead move is 43 KB of garbage a frame on a large tape, which shows
+  // up as a collection pause in the middle of a drag.
   const buffer = useRef<Float64Array>(new Float64Array(0));
   if (buffer.current.length !== entries.length + 1) {
     buffer.current = new Float64Array(entries.length + 1);
@@ -74,8 +83,6 @@ export default function MessagesPanel({
   }, [entries, heightOf]);
 
   const totalH = visible > 0 ? offsets[visible] : 0;
-
-  // ---- scroll plumbing ----------------------------------------------------
 
   useEffect(() => {
     const el = scroller.current;
@@ -97,8 +104,8 @@ export default function MessagesPanel({
 
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
 
-  // Follow the playhead: park the current entry two thirds down the viewport
-  // so the entries just before it stay in shot.
+  // Follow the playhead: park the current entry two thirds down the viewport so
+  // the entries just before it stay in shot.
   useEffect(() => {
     if (!follow || curEntry < 0) return;
     const el = scroller.current;
@@ -110,8 +117,6 @@ export default function MessagesPanel({
       setScrollTop(want);
     }
   }, [follow, curEntry, offsets]);
-
-  // ---- window -------------------------------------------------------------
 
   const [from, to] = useMemo(() => {
     if (visible <= 0) return [0, 0];
@@ -130,13 +135,12 @@ export default function MessagesPanel({
     return [a, Math.min(visible, b + 1)];
   }, [offsets, scrollTop, viewH, visible]);
 
-  const toggle = (i: number) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
+  const toggle = (i: number) => {
+    const next = new Set(open);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    onOpen(next);
+  };
 
   const rows = [];
   for (let i = from; i < to; i++) {
@@ -149,7 +153,6 @@ export default function MessagesPanel({
     const hit = entryHits ? entryHits[i] === 1 : null;
     const cls = [
       "entry",
-      e.role === "user" ? "entry-user" : "entry-assistant",
       e.err ? "entry-err" : "",
       isCur ? "entry-now" : "",
       hit === true ? "entry-hit" : hit === false ? "entry-miss" : "",
@@ -159,93 +162,83 @@ export default function MessagesPanel({
 
     rows.push(
       <div key={i} className={cls} style={{ top: offsets[i], height: heightOf(i) - GAP }}>
-        <div className="entry-card">
-          <button
-            type="button"
-            className="entry-head"
-            aria-expanded={isOpen}
-            onClick={() => toggle(i)}
-          >
+        <button
+          type="button"
+          className="entry-head"
+          aria-expanded={isOpen}
+          onClick={() => toggle(i)}
+        >
+          <span className="entry-top">
             <span className="entry-idx">{fmtInt(i + 1)}</span>
-            <span className="entry-role">{e.role}</span>
-            <span className="entry-sum">{label || <em style={{ opacity: 0.6 }}>no summary</em>}</span>
-            {hit === true && <span className="entry-match" title="Matches the active filter">match</span>}
-            {e.err && <span className="entry-fail">failed</span>}
+            <span className="entry-role">{e.role === "user" ? "User" : "Assistant"}</span>
+            {hit === true && <span className="tag tag-info">Match</span>}
+            {e.err && <span className="tag tag-error">Failed</span>}
+            <span className="spacer" />
             <span className="entry-tok">
               {e.output ? "+" + fmtTokens(e.output) + " out" : fmtInt(e.chars) + " ch"}
             </span>
             <span className="entry-caret" aria-hidden>{isOpen ? "−" : "+"}</span>
-          </button>
-          {isOpen && (
-            <div className="entry-blocks">
-              {Array.from({ length: e.to - e.from + 1 }, (_, k) => {
-                const s = steps[e.from + k];
-                if (!s) return null;
-                const ahead = s.i > curStep;
-                return (
-                  <button
-                    type="button"
-                    key={s.i}
-                    className={[
-                      "blk",
-                      s.i === curStep ? "blk-now" : "",
-                      ahead ? "blk-ahead" : "",
-                      s.err ? "blk-err" : "",
-                    ].join(" ")}
-                    onClick={() => onSelectStep(s.i)}
-                    aria-current={s.i === curStep ? "step" : undefined}
-                  >
+          </span>
+          <span className="entry-sum">{label || "no summary"}</span>
+        </button>
+        {isOpen && (
+          <div className="entry-blocks">
+            {Array.from({ length: e.to - e.from + 1 }, (_, k) => {
+              const s = steps[e.from + k];
+              if (!s) return null;
+              const ahead = s.i > curStep;
+              return (
+                <button
+                  type="button"
+                  key={s.i}
+                  className={[
+                    "blk",
+                    s.i === curStep ? "blk-now" : "",
+                    ahead ? "blk-ahead" : "",
+                    s.err ? "blk-err" : "",
+                  ].join(" ")}
+                  onClick={() => onSelectStep(s.i)}
+                  aria-current={s.i === curStep ? "step" : undefined}
+                >
+                  <span className="blk-top">
                     <span className="blk-i">{fmtInt(shownIndex(s.i) || s.i + 1)}</span>
-                    <span className="blk-kind">{s.tool || KIND_LABEL[s.kind]}</span>
-                    <span className="blk-sum">
-                      {redacted ? <em style={{ opacity: 0.7 }}>{s.preview}</em> : s.preview}
-                    </span>
-                    <span className="blk-chars">{s.chars ? fmtInt(s.chars) : ""}</span>
-                    <span className="blk-fail">{s.err ? "failed" : ""}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                    <span className="blk-kind">{stepLabel(s, toolOf(s.i))}</span>
+                    {s.err && <span className="tag tag-error">Failed</span>}
+                  </span>
+                  <span className="blk-sum">
+                    {redacted ? <em>{s.preview}</em> : s.preview}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>,
     );
   }
 
   return (
-    <section className="pane" aria-label="Messages array">
-      <div className="pane-head">
-        <h2>Messages array</h2>
-        <span className="stat-v" style={{ fontSize: 12 }}>
-          {fmtInt(Math.max(0, visible))}
-          <small>of {fmtInt(entries.length)} entries</small>
-        </span>
-        <span className="spacer" />
-        <label className="filter-toggle">
-          <input
-            type="checkbox"
-            checked={follow}
-            onChange={(e) => setFollow(e.target.checked)}
-          />
-          Follow playhead
+    <div className="messages">
+      <div className="messages-head">
+        <p className="messages-count">
+          <b>{fmtInt(Math.max(0, visible))}</b> of {fmtInt(entries.length)} entries at this step
+        </p>
+        <label className="check">
+          <input type="checkbox" checked={follow} onChange={(e) => onFollow(e.target.checked)} />
+          <span>Follow playhead</span>
         </label>
       </div>
-      <div className="pane-body" ref={scroller} onScroll={onScroll} data-testid="messages-scroller">
+      <div className="messages-body" ref={scroller} onScroll={onScroll} data-testid="messages-scroller">
         {visible > 0 ? (
-          <>
-            <div className="vlist" style={{ height: totalH }} data-count={visible}>
-              {rows}
-            </div>
-            <p className="list-foot">
-              {fmtInt(Math.max(0, visible))} entries so far · {fmtInt(shownIndex(curStep) || curStep + 1)} steps replayed
-            </p>
-          </>
+          <div className="vlist" style={{ height: totalH }} data-count={visible}>
+            {rows}
+          </div>
         ) : (
-          <p className="empty-note" style={{ padding: "14px" }}>
+          <p className="empty-line">
             Nothing in the array yet — the playhead is before the first message.
           </p>
         )}
       </div>
-    </section>
+    </div>
   );
 }

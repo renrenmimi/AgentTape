@@ -12,6 +12,7 @@
 
 import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { checkContrast } from "./scripts/contrast.mjs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -1094,7 +1095,13 @@ section("comparing two runs");
   ok(ident.verdict === "identical",
     "two runs with the same tools and totally different words are identical to this rule");
   ok(ident.agreed === 4 && ident.at === -1, "…with nothing to mark");
-  ok(/does not read what they said/.test(verdictLine(ident)), "…and the verdict says why");
+  // It used to say "What they said differs", which is a claim about text from
+  // a comparison that never reads text — and two runs of the *same* file came
+  // back with it. What it may say is what it did: the words were not compared.
+  ok(/Message contents are not compared/.test(verdictLine(ident)),
+    "…and the verdict says what was compared rather than guessing about the rest");
+  ok(!/differ/i.test(verdictLine(ident)),
+    "…and claims nothing about text it never read", verdictLine(ident));
 
   const forked = runOf(["Read", "Bash", "Write", "Write"], "third run");
   const d = compareSpines(buildSpine(A.steps), buildSpine(forked.steps));
@@ -1598,6 +1605,133 @@ ok(/willReadFrequently/.test(canvasSrc), "the context helper decides about readb
 ok(/has\("selftest"\)/.test(canvasSrc),
   "…and only asks for a readable canvas when the self-test will read it");
 
+// ---------------------------------------------------------------- the visual system, measured
+//
+// A palette is a promise about legibility, and the only thing that keeps a
+// promise like that through a redesign is a measurement. scripts/contrast.mjs
+// resolves every foreground against the surface it is actually painted on and
+// computes the WCAG ratio; this runs it, so a token nobody checked cannot
+// reach the interface.
+
+{
+  const tokens = read("app/tokens.css");
+  ok(tokens !== "", "the colours live in one file");
+  ok(/\[data-theme="dark"\]/.test(tokens) && /\[data-theme="light"\]/.test(tokens),
+    "…with both themes in it");
+  ok(/@import "\.\/tokens\.css"/.test(read("app/globals.css")),
+    "…and the stylesheet takes them from there rather than restating them");
+
+  // Every colour a component uses is a role. A hex value in a component is a
+  // colour that no measurement can find, which is how an unreadable grey
+  // survives a review: it is not in the table anybody checked.
+  const cssHex = [];
+  for (const [i, line] of read("app/globals.css").split("\n").entries()) {
+    if (/^\s*\/\*/.test(line)) continue;
+    if (/#[0-9a-fA-F]{3,8}\b/.test(line)) cssHex.push(`globals.css:${i + 1}`);
+  }
+  ok(cssHex.length === 0, "no component style declares a colour of its own",
+    cssHex.slice(0, 4).join(", "));
+
+  // Nothing dims text with opacity. `opacity: .4` on a paragraph produces a
+  // colour that is not in the table and cannot be measured against the surface
+  // under it, which is the same failure wearing a different hat.
+  const dimmed = [];
+  for (const [i, line] of read("app/globals.css").split("\n").entries()) {
+    if (/^\s*\/\*/.test(line)) continue;
+    const m = /(^|[^-])opacity:\s*(0?\.\d+)/.exec(line);
+    if (m && Number(m[2]) < 1) dimmed.push(`globals.css:${i + 1}`);
+  }
+  ok(dimmed.length === 0, "…and no text is made unreadable with opacity instead",
+    dimmed.slice(0, 4).join(", "));
+
+  const rows = checkContrast();
+  const bad = rows.filter((r) => !r.ok);
+  ok(rows.length >= 80, "the contrast check covers the pairs the app renders",
+    `${rows.length} pairs`);
+  ok(bad.length === 0, "every one of them meets the ratio its role needs",
+    bad.map((r) => `${r.theme} ${r.fg}/${r.bg} ${r.ratio.toFixed(2)}`).slice(0, 4).join(", "));
+  ok(rows.some((r) => r.kind === "text") && rows.some((r) => r.kind === "ui"),
+    "…held to two ratios, because WCAG asks for two");
+
+  // The body used to be permanently unscrollable, which hid every overflow bug
+  // in the application behind a viewport that could not move.
+  // Comments stripped first: the rule block explains why the declaration is
+  // gone, and a check that reads its own explanation as the thing it forbids
+  // is a check that can only ever fail.
+  const css = read("app/globals.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const body = css.slice(css.indexOf("\nbody {"), css.indexOf("}", css.indexOf("\nbody {")));
+  ok(body.length > 20 && !/overflow:\s*hidden/.test(body),
+    "the document body is not permanently unscrollable", body.replace(/\s+/g, " ").slice(0, 90));
+}
+
+// ---------------------------------------------------------------- the deployed build tells the truth about the helper
+//
+// The session index used to tell everybody, on the deployed site, to run
+// `npm run helper` and come back. The helper answers 127.0.0.1 and a browser
+// will not let a page on another origin reach it — so following that
+// instruction could not work, and the page said it in the imperative. Both
+// branches of that copy are here, and only one of them can be on screen in any
+// given run, so this reads the source of the one the in-page suite does not
+// take.
+
+{
+  const src = read("app/all-sessions.tsx");
+  ok(src !== "", "the session index is a module");
+  ok(/Available when AgentTape is running locally/.test(src),
+    "away from localhost it says when the helper route is available");
+  ok(/This page makes no request to loopback/.test(src),
+    "…and that it is not quietly trying anyway");
+  ok(!/Start it with npm run helper and come back/.test(src),
+    "…and no longer gives an instruction that cannot work from a deployed page");
+
+  // Structural, not editorial: the fetch is inside a function that refuses
+  // when the page is not local, so the promise above is a property of the code.
+  const fromHelper = src.slice(src.indexOf("const fromHelper"), src.indexOf("const runLocal"));
+  ok(/if \(!isLocal\(\)\) return;/.test(fromHelper),
+    "…because the one request it can make refuses off localhost before making it");
+  const fetches = [...src.matchAll(/fetch\(/g)].length;
+  ok(fetches === 1, "…and there is only one of them to guard", String(fetches));
+
+  // Clearing the cache is a destructive-sounding control, so it says what it
+  // destroys — which is a browser index and not anybody's transcript.
+  ok(/no transcript is touched|No\s*\n?\s*transcript is touched/i.test(src),
+    "the cache control says clearing it does not touch a transcript");
+}
+
+// ---------------------------------------------------------------- names for steps, and what is under them
+//
+// The list calls a `tool_result` a tool result. The transcript calls it
+// `role: "user"`, because that is how the API carries it. Both are true and
+// the interface has to keep them apart: one is a presentation layer, the other
+// is the record, and collapsing them would be a change to the data dressed as
+// a change to the wording.
+
+{
+  const labels = read("lib/labels.ts");
+  ok(labels !== "", "the step names are their own module");
+  ok(!/\bs\.(kind|rawType|role)\s*=/.test(labels), "…and it assigns nothing on a step");
+  ok(/rawDescriptor/.test(labels), "…while still being able to say what the record called itself");
+  const record = read("app/record-data.tsx");
+  ok(/Parsed record/.test(record) && /Raw record/.test(record),
+    "the record panel distinguishes the projection from the line");
+  ok(/there is no original line to show/i.test(record),
+    "…and says so rather than re-serialising the projection as the source");
+  ok(/raw: async \(\) => null/.test(read("lib/tape.ts")),
+    "…which is a property of the tape reader, not of the panel");
+
+  // The key-event index is derived, not summarised. Anything that opened a
+  // file or read a body here would be a second parsing path.
+  const events = read("lib/events.ts");
+  ok(events !== "", "the key events are derived in a module");
+  ok(!/fetch\(|readFile|\.body\(/.test(events), "…which opens nothing and reads no body");
+  ok(/Largest observed context increase/.test(events),
+    "…and names the context event as observed rather than as a cause");
+  ok(/No failed tool calls recorded|no failed tool calls recorded/.test(events),
+    "…and reports the absence of a recorded failure as exactly that");
+  ok(!/succeeded|success|went well|correct/i.test(events.replace(/^\s*(\/\/|\*).*$/gm, "")),
+    "…and never as success");
+}
+
 // CI must not be mistaken for covering the in-page suite. The file says so;
 // this makes the file keep saying so.
 const ci = existsSync(join(root, ".github/workflows/ci.yml"))
@@ -1615,13 +1749,13 @@ const probeGuard = helperSrc.indexOf("helperSeenBefore()) return");
 const probeCall = helperSrc.indexOf("probe();", probeGuard);
 ok(probeGuard > 0 && probeCall > probeGuard,
   "the helper is only probed unasked once it has answered here before");
-const emptySrc = read("app/empty-state.tsx");
-ok(/Look for it|Look again/.test(emptySrc),
+const sessionsSrc = read("app/all-sessions.tsx");
+ok(/Look for it|Look again/.test(sessionsSrc),
   "…and there is a control to look for it the first time");
 ok(/Look for it|Look again/.test(read("app/compare.tsx")),
   "…on the comparison panel too");
 // One implementation, so the two panels cannot drift apart on it.
-const probeImpls = [emptySrc, read("app/compare.tsx")]
+const probeImpls = [sessionsSrc, read("app/compare.tsx")]
   .filter((src) => /fetch\(\s*HELPER/.test(src)).length;
 ok(probeImpls === 0, "neither panel probes the helper itself", String(probeImpls));
 
@@ -1667,7 +1801,7 @@ ok(!/customTitle|aiTitle|lastPrompt/.test(helperCode), "the helper never reads a
 // The screen built from these records must not grow a text column. The risk is
 // naming a field that carries prompt text — not the word "summary" in an import
 // path, or "title" on a tooltip.
-const ovSrc = read("app/overview.tsx");
+const ovSrc = read("app/all-sessions.tsx");
 const ovCode = ovSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 ok(!/customTitle|aiTitle|lastPrompt|\.preview\b|\.description\b|firstMessage|firstSaid/i.test(ovCode),
   "the overview never reads a field that carries prompt text");
@@ -1723,7 +1857,7 @@ const resolverDefs = (helperCode.match(/function resolveTranscript/g) ?? []).len
 ok(resolverDefs === 1, "there is exactly one path resolver", String(resolverDefs));
 ok(/subagents/.test(helperCode) && /resolveTranscript\(\s*$|resolveTranscript\(/.test(helperCode),
   "subagent paths are built inside that resolver");
-const appSrc = read("app/page.tsx") + read("app/empty-state.tsx");
+const appSrc = read("app/page.tsx") + read("app/home.tsx") + read("app/open-session.tsx");
 ok(!/meta\.description|\.description\b/.test(appSrc),
   "the page never reads a subagent description either");
 
@@ -1901,8 +2035,17 @@ for (const rel of exampleRules) {
     ["the in-page suite", /npm run selftest`? \|/],
     ["the rule checker", /agenttape check`? \|/],
   ]) ok(re.test(cover), "…naming " + what);
-  ok(/164\/168 passed · 0 failed ·\s*\n?4 not run here/.test(cover),
-    "…and the three numbers the in-page job asserts");
+  // Derived rather than restated. Three copies of a number is two chances for
+  // one of them to drift, and this file's whole argument is that a number in
+  // prose has to be checked against the thing it describes.
+  const inPageTotal = Number(read("app/selftest.ts").match(/DECLARED_ASSERTIONS = (\d+);/)?.[1] ?? -1);
+  const inPageSkips = Number(read("app/selftest.ts")
+    .match(/"no-helper": \{ total: DECLARED_ASSERTIONS, skipped: (\d+) \}/)?.[1] ?? -1);
+  const contract = new RegExp(
+    `${inPageTotal - inPageSkips}/${inPageTotal} passed · 0 failed ·\\s*\\n?${inPageSkips} not run here`);
+  ok(inPageTotal > 0 && inPageSkips >= 0 && contract.test(cover),
+    "…and the three numbers the in-page job asserts",
+    `${inPageTotal - inPageSkips}/${inPageTotal}, ${inPageSkips} skipped`);
   // Numbers in prose drift. These three are checked against the things they
   // describe, because a README that says 591 when the file runs 599 is the
   // same class of wrong as a counter that stops early.
@@ -2204,8 +2347,8 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     "…and the blocks are not handed one to be tempted by");
   ok(!stLines.some((l) => /onDemo\(/.test(l)),
     "the demo is loaded by pressing the button, not by calling the callback behind it");
-  ok(/const slider = \(\) =>/.test(st),
-    "…and no DOM node is held across a block either: `need` remounts the workbench");
+  ok(/const rail = \(\) =>/.test(st),
+    "…and no DOM node is held across a block either: `need` may reload the demo");
 
   // The DOM twin of that rule, enforced rather than remembered.
   //
@@ -2471,8 +2614,14 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
     "…driving a production build it served itself");
   ok(/grep -qF "\[no-helper\]"/.test(wf),
     "…asserting the mode it ran in rather than inferring it");
-  ok(/164\/168 passed · 0 failed · 4 not run here · 168 declared, 4 skips declared/.test(wf),
-    "…and all three declared numbers, since any of them moving is a red build");
+  const total9 = Number(read("app/selftest.ts").match(/DECLARED_ASSERTIONS = (\d+);/)?.[1] ?? -1);
+  const skips9 = Number(read("app/selftest.ts")
+    .match(/"no-helper": \{ total: DECLARED_ASSERTIONS, skipped: (\d+) \}/)?.[1] ?? -1);
+  ok(wf.includes(
+    `${total9 - skips9}/${total9} passed · 0 failed · ${skips9} not run here · ` +
+    `${total9} declared, ${skips9} skips declared`),
+    "…and all three declared numbers, since any of them moving is a red build",
+    `${total9 - skips9}/${total9}, ${skips9} skipped`);
   ok(!/--helper/.test(wf), "…and never the helper mode, which cannot run on a runner");
   ok(/set -o pipefail/.test(wf),
     "…with the driver's exit code surviving the pipe into tee");
@@ -2546,7 +2695,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 656;
+const EXPECTED_CHECKS = 684;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 
