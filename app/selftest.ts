@@ -29,7 +29,6 @@ type Api = {
   setPos: (n: number) => void;
   goToGlobal: (n: number) => void;
   onDemo: () => Promise<void>;
-  loadTapeFile: (f: TapeFile) => void;
   setShowMeta: (b: boolean) => void;
   filter: Filterish;
   setFilter: (f: Filterish) => void;
@@ -206,6 +205,30 @@ async function pickTool(name: string): Promise<void> {
   await click(".popover-foot button", /^done$/i, "close the filters");
 }
 
+/**
+ * Open a generated tape through the Open session dialog.
+ *
+ * The fixtures below exist only in memory — there is no six-thousand-step file
+ * on a headless runner's disk — but that is a reason to generate the bytes,
+ * not a reason to reach past the interface with them. Handing them to the same
+ * control a person uses means every one of these blocks also exercises the
+ * open path on the way in.
+ */
+async function openTape(file: TapeFile, name: string): Promise<void> {
+  await click(".shell-bar button", /open session/i, "open the session dialog");
+  if (!(await until(() => !!document.querySelector(".dialog input[type=file]"), 160))) {
+    throw new Error("the Open session dialog has no file control");
+  }
+  const input = document.querySelector<HTMLInputElement>(".dialog input[type=file]")!;
+  const dt = new DataTransfer();
+  dt.items.add(new File([JSON.stringify(file)], name, { type: "application/json" }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  if (!(await until(() => !document.querySelector(".dialog"), 300))) {
+    throw new Error(`${name} did not open`);
+  }
+}
+
 /** Take every filter off, through the control that says so. */
 async function clearFilters(): Promise<void> {
   const chip = [...document.querySelectorAll<HTMLElement>(".chips button")]
@@ -306,6 +329,27 @@ function awkwardTape(): TapeFile {
   };
 }
 
+/** A run with more failures than the lead list of key events holds. */
+function manyFailuresTape(fails = 10): TapeFile {
+  const t0 = Date.parse("2026-02-02T09:00:00Z");
+  const steps: TapeStep[] = [
+    { k: "user", y: "user", r: "user", ts: t0, c: 20, b: 0, p: "go", x: 1000 },
+  ];
+  for (let i = 0; i < fails; i++) {
+    steps.push({ k: "tool-call", y: "assistant", r: "assistant", m: "m" + i,
+      d: "claude-opus-5", n: "Bash", u: "t" + i, ts: t0 + i * 2000 + 1000,
+      c: 40, b: 0, p: "call " + i, x: 1000 + i * 10 });
+    steps.push({ k: "tool-result", y: "user", r: "user", u: "t" + i, e: 1,
+      w: "tool reported an error", ts: t0 + i * 2000 + 1500, c: 60, b: 0,
+      p: "failed " + i, x: 1000 + i * 10 });
+  }
+  return {
+    format: TAPE_FORMAT, redacted: false, label: "selftest many failures",
+    session: { id: "", bytes: 0, lines: steps.length, badLines: 0, versions: [] },
+    fields: {}, steps,
+  };
+}
+
 /** A tape big enough that a list which is not virtualised will show it. */
 function syntheticTape(steps: number): TapeFile {
   const out: TapeStep[] = [];
@@ -389,7 +433,7 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 366;
+const DECLARED_ASSERTIONS = 371;
 
 /**
  * How many `ok(` and `skip(` call sites this file contains.
@@ -406,7 +450,7 @@ const DECLARED_ASSERTIONS = 366;
  * smaller number confidently, which is why this is now counted twice by methods
  * that fail differently and the two have to agree.
  */
-export const DECLARED_CALL_SITES = 330;
+export const DECLARED_CALL_SITES = 335;
 
 /**
  * Which mode the run is in, and what that mode is supposed to produce.
@@ -1175,9 +1219,7 @@ async function runBlocks(
   // ---- delegated work is visible even with no subagent file ---------------
   {
     await need("delegated work is visible even with no subagent file");
-    // Not driveable: there is no subagent file on disk in a headless run, and
-    // the demo's single delegation is one this block wants a bare tape for.
-    api().loadTapeFile(tapeWithDelegation());
+    await openTape(tapeWithDelegation(), "delegation.tape.json");
     // The next line reads `api().delegations`, so that is what is waited on.
     await until(() => api().delegations.length === 1, 180);
     const dels = api().delegations;
@@ -1213,10 +1255,10 @@ async function runBlocks(
   // ---- a delegated run can be stepped through -----------------------------
   {
     await need("a delegated run can be stepped through");
-    // Not driveable: a nested run needs a subagent file, and there is none in a
-    // headless run. The tape and the run are both set directly and say so.
-    api().loadTapeFile(tapeWithDelegation());
+    await openTape(tapeWithDelegation(), "delegation.tape.json");
     await until(() => api().delegations.length === 1, 180);
+    // The run itself is still attached directly: pairing a subagent file needs
+    // a subagent file, and there is none on a headless runner's disk.
     // Opening a session lands on the overview, which is the behaviour every
     // other route relies on — so getting to Replay is a click, not an
     // assumption.
@@ -1857,6 +1899,39 @@ async function runBlocks(
     await until(() => api().where !== "sessions", 180);
   }
 
+  // ---- the key events list is capped, and says it is ----------------------
+  //
+  // A run with twelve failures in it must not bury the one compaction under
+  // them, and must not silently show six of twelve either. The lead list takes
+  // one of each kind first, says how many it is showing, and the rest are one
+  // control away — not a jump to one of them, which is what "View all" used to
+  // do and is not what it says.
+  {
+    await need("the key events list is capped, and says it is");
+    await openTape(manyFailuresTape(10), "many-failures.tape.json");
+    await until(() => api().events.length >= 10, 240);
+    const total = api().events.length;
+
+    await click(".view-tab", /^overview$/i, "look at the overview");
+    await until(() => api().where === "overview" && !!document.querySelector(".event"), 240);
+    const lead = document.querySelectorAll(".event").length;
+    ok(lead > 0 && lead < total, "a long list of events is capped", `${lead} of ${total}`);
+    ok(/Showing \d+ of \d+ indexed events/.test(document.querySelector(".events-more")?.textContent ?? ""),
+      "…and says that it is showing some of them",
+      document.querySelector(".events-more")?.textContent ?? "no note");
+
+    const more = [...document.querySelectorAll<HTMLElement>(".section-head button")]
+      .find((b) => /show all \d+ events/i.test(b.textContent ?? ""));
+    ok(!!more, "…with a control that offers the rest", more?.textContent ?? "no control");
+    more?.click();
+    await until(() => document.querySelectorAll(".event").length === total, 180);
+    ok(document.querySelectorAll(".event").length === total,
+      "…which shows every one of them rather than jumping at one",
+      `${document.querySelectorAll(".event").length} of ${total}`);
+    ok(/All \d+ indexed events/.test(document.querySelector(".events-more")?.textContent ?? ""),
+      "…and says so");
+  }
+
   // ---- the marks on the rail can be looked up -----------------------------
   //
   // The rail draws a shape per kind, which is what keeps it readable with no
@@ -1893,8 +1968,7 @@ async function runBlocks(
   // counts near the top of the range.
   {
     await need("awkward strings do not push the page sideways");
-    // Not driveable: this shape of file is generated, not sitting on a disk.
-    api().loadTapeFile(awkwardTape());
+    await openTape(awkwardTape(), "awkward.tape.json");
     await until(() => api().view?.steps.length === 3, 240);
 
     await click(".view-tab", /^overview$/i, "look at the overview");
@@ -2141,11 +2215,8 @@ async function runBlocks(
   {
     await need("virtualisation on a large tape");
     const BIG = 6000;
-    // Not driveable: there is no six-thousand-step file to open in a headless
-    // run, and generating one on disk to open through the picker would be a
-    // slower way of arriving at the same array.
-    api().loadTapeFile(syntheticTape(BIG));
-    await until(() => api().view?.steps.length === BIG, 300);
+    await openTape(syntheticTape(BIG), "large.tape.json");
+    await until(() => api().view?.steps.length === BIG, 600);
     const big = api().view;
     ok(!!big && big.steps.length === BIG, "the synthetic tape loaded", `${big?.steps.length ?? 0} steps`);
 

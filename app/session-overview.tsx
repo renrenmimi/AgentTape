@@ -29,8 +29,8 @@ type Props = {
   summary: Summary;
   /** The short list, already chosen and ordered by lib/events.ts. */
   events: KeyEvent[];
-  /** How many there are in total, so "showing some of them" can be exact. */
-  eventTotal: number;
+  /** All of them, in the same order, for when somebody asks to see the rest. */
+  allEvents: KeyEvent[];
   notes: RecordNote[];
   facts: string;
   sourceLabel: string;
@@ -41,7 +41,6 @@ type Props = {
   visited: boolean;
   onExplore: () => void;
   onEvent: (e: KeyEvent) => void;
-  onAllEvents: () => void;
   onContext: () => void;
   /** Set for the demo only: one dismissible line suggesting where to start. */
   hint: string;
@@ -75,10 +74,13 @@ const EVENT_ICON = {
 } as const;
 
 export default function SessionOverview({
-  tape, summary, events, eventTotal, notes, facts, sourceLabel, shownIndex, atStep, visited,
-  onExplore, onEvent, onAllEvents, onContext, hint, onDismissHint,
+  tape, summary, events, allEvents, notes, facts, sourceLabel, shownIndex, atStep, visited,
+  onExplore, onEvent, onContext, hint, onDismissHint,
 }: Props) {
   const [details, setDetails] = useState(false);
+  const [allShown, setAllShown] = useState(false);
+  const eventTotal = allEvents.length;
+  const rows = allShown ? allEvents : events;
   const s = summary;
   const known = s.input + s.output + s.cacheRead + s.cacheCreate > 0;
 
@@ -137,13 +139,18 @@ export default function SessionOverview({
           <div className="section-head">
             <h2 id="events-title">Key events</h2>
             {eventTotal > events.length && (
-              <button type="button" className="btn btn-quiet btn-sm" onClick={onAllEvents}>
-                View all {fmtInt(eventTotal)} events
+              <button
+                type="button"
+                className="btn btn-quiet btn-sm"
+                aria-expanded={allShown}
+                onClick={() => setAllShown((v) => !v)}
+              >
+                {allShown ? "Show fewer" : `Show all ${fmtInt(eventTotal)} events`}
               </button>
             )}
           </div>
 
-          {events.length === 0 ? (
+          {rows.length === 0 ? (
             <p className="empty-line">
               {s.errors === 0
                 ? "No failed tool calls recorded, and nothing else in this file is flagged. " +
@@ -153,7 +160,7 @@ export default function SessionOverview({
           ) : (
             <>
               <ul className="event-list">
-                {events.map((e) => (
+                {rows.map((e) => (
                   <li className={"event event-" + e.tone} key={e.kind + ":" + e.step}>
                     <span className="event-icon" aria-hidden>{EVENT_ICON[e.tone]}</span>
                     <span className="event-body">
@@ -174,8 +181,10 @@ export default function SessionOverview({
               </ul>
               {eventTotal > events.length && (
                 <p className="events-more">
-                  Showing {fmtInt(events.length)} of {fmtInt(eventTotal)} indexed events, one of
-                  each kind first. The rest are in Replay.
+                  {allShown
+                    ? `All ${fmtInt(eventTotal)} indexed events.`
+                    : `Showing ${fmtInt(events.length)} of ${fmtInt(eventTotal)} indexed events, ` +
+                      "one of each kind first."}
                 </p>
               )}
             </>

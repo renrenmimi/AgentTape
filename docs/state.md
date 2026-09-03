@@ -18,10 +18,10 @@ Every push, on every pull request:
 | --- | --- |
 | `node verify.mjs` | 684 assertions over the parser, the redactor, the rule checker, the corpus summary and this repository's own guarantees |
 | `npm run counters` | six deliberate breakages of the assertion counting, each required to fail the counter that should catch it, plus an unmutated copy required to come back clean |
-| `npm run selftest` | the in-page suite, 366 assertions against a live DOM in a real browser, no-helper mode, against a production build the job serves itself |
+| `npm run selftest` | the in-page suite, 371 assertions against a live DOM in a real browser, no-helper mode, against a production build the job serves itself |
 | `agenttape check` | the rule checker against two committed fixture tapes, one that meets its expectations and one that breaks all five |
 
-The in-page job asserts three numbers — `362/366 passed · 0 failed · 4 not run
+The in-page job asserts three numbers — `367/371 passed · 0 failed · 4 not run
 here` — and the mode it ran in. Any of them moving is a red build.
 
 Every number in that table is checked against the thing it describes. The README

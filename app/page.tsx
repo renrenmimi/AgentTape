@@ -221,10 +221,19 @@ export default function Page() {
     [delegations, curGlobal],
   );
 
-  /** The number a step is called on screen: its position in the visible view. */
+  /**
+   * The number a step is called on screen: its position in the visible view.
+   *
+   * A step that is *not* in the view — a bookkeeping record, with the toggle
+   * off — is numbered by the visible step a jump to it would land on, because
+   * that is the number the reader will see when they get there. Numbering it
+   * by its global index instead is how "Inspect step 34" put you on a page
+   * headed "Step 31". `checkContext` walks every step including bookkeeping
+   * ones, so a check can genuinely name one.
+   */
   const shownIndex = useCallback(
-    (gi: number) => (stepView && stepView.at[gi] >= 0 ? stepView.at[gi] + 1 : 0),
-    [stepView],
+    (gi: number) => (stepView && stepView.steps.length ? viewIndexOf(gi) + 1 : 0),
+    [stepView, viewIndexOf],
   );
 
   const allEvents = useMemo(
@@ -855,7 +864,6 @@ export default function Page() {
       get delegations() { return delegations; },
       get origin() { return origin; },
       loadSubagent,
-      loadTapeFile: (f: TapeFile) => adopt(tapeFromFile(f), "file"),
     };
     (window as unknown as Record<string, unknown>).__agenttape = api;
   }, [
@@ -1066,7 +1074,7 @@ export default function Page() {
           tape={tape}
           summary={summary}
           events={events}
-          eventTotal={allEvents.length}
+          allEvents={allEvents}
           notes={notes}
           facts={factLine(summary)}
           sourceLabel={tape.meta.redacted ? "Redacted tape" : SOURCE_LABEL[sourceKind]}
@@ -1075,7 +1083,6 @@ export default function Page() {
           visited={visitedReplay}
           onExplore={() => goToView("replay")}
           onEvent={onEvent}
-          onAllEvents={() => inspect(events[0]?.step ?? curGlobal, "details")}
           onContext={() => inspect(
             summary.jumpBy > 0 ? summary.jumpAt : curGlobal, "context")}
           hint={sourceKind === "demo" && !hintOff ? DEMO_HINT : ""}
