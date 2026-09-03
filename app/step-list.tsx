@@ -83,14 +83,25 @@ export default function StepList({
     });
   }, [onScrollTop]);
 
-  // Restore before paint, and before the reveal effect below decides whether
-  // the selection is off screen — otherwise it measures against a list that is
-  // momentarily at the top and scrolls away from where you were.
+  /**
+   * Where this list was when it mounted, and whether it was restored.
+   *
+   * Restoring a saved position is a decision. The reveal below is a correction
+   * for a selection that has moved out of sight — and it runs again whenever
+   * the viewport is measured, which happens twice on mount. Left to itself it
+   * overrode the restore a frame later, so the two are told apart: until the
+   * selection or an explicit reveal actually changes, a restored list stays
+   * where it was put.
+   */
+  const restored = useRef(false);
+  const mountedAt = useRef({ pos, revealKey });
+
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !saved) return;
     el.scrollTop = saved;
     setScrollTop(saved);
+    restored.current = true;
     // Mount only: after that the list owns its own position.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -101,6 +112,10 @@ export default function StepList({
   // when the row is actually outside, and land it a third of the way down so
   // the steps before it stay in shot.
   useEffect(() => {
+    if (restored.current
+      && pos === mountedAt.current.pos
+      && revealKey === mountedAt.current.revealKey) return;
+    restored.current = false;
     const el = scroller.current;
     if (!el || pos < 0 || pos >= n) return;
     const top = pos * ROW;
@@ -110,7 +125,12 @@ export default function StepList({
     el.scrollTop = want;
     setScrollTop(want);
     onScrollTop(want);
-  }, [pos, n, viewH, revealKey, onScrollTop]);
+    // `onScrollTop` is deliberately not a dependency. It is a sink, not a
+    // trigger, and an unstable one re-ran this effect on every render — which
+    // meant a list restored to where you left it was scrolled back to the
+    // selection a frame later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pos, n, viewH, revealKey]);
 
   const [from, to] = useMemo(() => {
     const first = Math.max(0, Math.floor(scrollTop / ROW) - OVER);

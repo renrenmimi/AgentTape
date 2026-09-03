@@ -442,7 +442,13 @@ kbd {
   color: var(--text-secondary);
   max-width: 75ch;
 }
-.view-back { margin-bottom: 12px; margin-left: -10px; }
+.view-back { margin-bottom: 12px; margin-left: -10px; max-width: 100%; }
+.view-back-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
+}
 
 .flash {
   display: flex;
@@ -1650,7 +1656,11 @@ th.num .ov-sort { flex-direction: row-reverse; }
   .detail-panel { overflow: visible; }
   .pane-body { padding: 16px; }
 
-  .replay-bar { flex-wrap: wrap; gap: 8px 12px; padding-bottom: 10px; }
+  .replay-bar { flex-wrap: wrap; gap: 8px 10px; padding-bottom: 10px; }
+  /* The drawer trigger already reads "Steps 14/31". Saying it twice cost a
+     whole row on a phone. */
+  .stepnav-at { display: none; }
+  .replay-title { font-size: 18px; line-height: 26px; }
   /* The rail is worth keeping on a phone — two failures ahead of you is worth
      knowing — but not worth squeezing between two buttons. Its own row. */
   .replay-rail { order: 9; flex-basis: 100%; min-width: 0; }

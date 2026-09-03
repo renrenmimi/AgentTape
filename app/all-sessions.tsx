@@ -251,11 +251,11 @@ export default function AllSessions({ onOpen, onBack, backLabel }: Props) {
 
   return (
     <main className="view view-sessions" id="main">
-      <div className="view-inner view-inner-wide">
+      <div className={"view-inner" + (rows && rows.length > 0 ? " view-inner-wide" : "")}>
         <header className="view-head">
           <button type="button" className="btn btn-quiet btn-sm view-back" onClick={onBack}>
             <BackIcon />
-            <span>Back to {backLabel}</span>
+            <span className="view-back-label">Back to {backLabel}</span>
           </button>
           <h1 className="view-title">Local sessions</h1>
           <p className="view-lede">

@@ -128,6 +128,7 @@ export default function Page() {
   const [revealKey, setRevealKey] = useState(0);
   /** Where the step list was scrolled to. Held here so a view switch keeps it. */
   const listScroll = useRef(0);
+  const onListScroll = useCallback((y: number) => { listScroll.current = y; }, []);
   const [compareB, setCompareB] = useState<Tape | null>(null);
 
   // ---- loading ------------------------------------------------------------
@@ -1175,7 +1176,7 @@ export default function Page() {
           onFollow={setFollow}
           revealKey={revealKey}
           listScroll={listScroll.current}
-          onListScroll={(y) => { listScroll.current = y; }}
+          onListScroll={onListScroll}
         />
       )}
     </div>

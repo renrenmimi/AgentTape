@@ -1698,6 +1698,51 @@ ok(/has\("selftest"\)/.test(canvasSrc),
     "the cache control says clearing it does not touch a transcript");
 }
 
+// ---------------------------------------------------------------- the header folds without dropping anything
+//
+// Below 720px the bar keeps two controls and the session row keeps only its
+// tabs; everything else is in one menu. That menu is `display: none` at any
+// width where the rows are shown, so no DOM test can open it — which makes the
+// invariant a property of the source, and this the place to hold it.
+
+{
+  const shell = read("app/shell.tsx");
+  ok(shell !== "", "the shell is a module");
+
+  const narrow = shell.slice(shell.indexOf("const narrowItems"), shell.indexOf("return ("));
+  ok(narrow.length > 60, "the narrow menu builds its own list", `${narrow.length} chars`);
+  for (const [what, re] of [
+    ["the session index", /All sessions/],
+    ["the checks", /Checks —/],
+    ["both export actions", /\.\.\.exportItems/],
+    ["everything the wide menu holds", /\.\.\.moreItems/],
+  ]) {
+    ok(re.test(narrow), "…and it carries " + what);
+  }
+
+  // Four groups is the ceiling, and the two that must be findable are named.
+  const bar = shell.slice(shell.indexOf('<div className="shell-bar">'), shell.indexOf("{view && ("));
+  const groups = (bar.match(/className="btn btn-sm|<Menu/g) ?? []).length;
+  ok(groups > 0 && groups <= 4, "the bar declares at most four interaction groups",
+    String(groups));
+  ok(/Open session/.test(bar) && /All sessions/.test(bar),
+    "…and opening a session and the index are two of them");
+
+  // Checks and Export are about one session, so they sit with it.
+  const row = shell.slice(shell.indexOf("{view && ("));
+  ok(/<ChecksIcon/.test(row) && /<ExportIcon/.test(row),
+    "Checks and Export are on the row that belongs to the session");
+  ok(!/<ChecksIcon|<ExportIcon/.test(bar), "…and are not also in the bar");
+
+  // One fold, and late. A rule at 1024 was the cliff this replaced.
+  const css = read("app/globals.css");
+  const folds = [...css.matchAll(/@media \(max-width: (\d+)px\) \{([^@]*?)\n\}/gs)]
+    .filter(([, , body]) => /\.bar-wide\s*\{\s*display:\s*none/.test(body))
+    .map(([, at]) => Number(at));
+  ok(folds.length === 1, "the bar folds at exactly one width", folds.join(", "));
+  ok(folds[0] <= 800, "…and not before 800px", `${folds[0]}px`);
+}
+
 // ---------------------------------------------------------------- names for steps, and what is under them
 //
 // The list calls a `tool_result` a tool result. The transcript calls it
@@ -1726,8 +1771,13 @@ ok(/has\("selftest"\)/.test(canvasSrc),
   ok(!/fetch\(|readFile|\.body\(/.test(events), "…which opens nothing and reads no body");
   ok(/Largest observed context increase/.test(events),
     "…and names the context event as observed rather than as a cause");
-  ok(/No failed tool calls recorded|no failed tool calls recorded/.test(events),
+  // The sentence moved to the page that says it when the list is empty; the
+  // property it guards did not, so the assertion follows it rather than being
+  // deleted along with the string it happened to be matching.
+  ok(/No failed tool calls recorded/.test(read("app/session-overview.tsx")),
     "…and reports the absence of a recorded failure as exactly that");
+  ok(/not a verdict on the work/.test(read("app/session-overview.tsx")),
+    "…saying in the same breath that it is not a verdict");
   ok(!/succeeded|success|went well|correct/i.test(events.replace(/^\s*(\/\/|\*).*$/gm, "")),
     "…and never as success");
 }
@@ -2695,7 +2745,7 @@ ok(/examples\/lenient\.rules\.json/.test(readme), "…and names a rule set they 
 // passes. Declaring it turns a deletion into a failure, at the cost of one
 // number that has to move when the file does — which is the correct trade,
 // because the alternative is a suite that shrinks without saying so.
-const EXPECTED_CHECKS = 684;
+const EXPECTED_CHECKS = 697;
 ok(checked + 1 === EXPECTED_CHECKS, "this file ran every check it declares",
   `${checked + 1} ran, ${EXPECTED_CHECKS} declared`);
 

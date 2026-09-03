@@ -48,6 +48,7 @@ export default function NestedWorkbench({ run, parentStep, parentLabel, onClose 
   const [follow, setFollow] = useState(true);
   const [revealKey, setRevealKey] = useState(0);
   const listScroll = useRef(0);
+  const onListScroll = useCallback((y: number) => { listScroll.current = y; }, []);
 
   const pairs = useMemo(() => pairTools(tape.steps), [tape]);
   const summary = useMemo(() => summarise(tape), [tape]);
@@ -190,7 +191,7 @@ export default function NestedWorkbench({ run, parentStep, parentLabel, onClose 
         onFollow={setFollow}
         revealKey={revealKey}
         listScroll={listScroll.current}
-        onListScroll={(y) => { listScroll.current = y; }}
+        onListScroll={onListScroll}
         nested
       />
     </div>
