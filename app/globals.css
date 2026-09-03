@@ -686,10 +686,13 @@ kbd {
 }
 
 .facts { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 4px 16px; margin: 0; }
-.facts-wide { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+/* Two label/value pairs per row. `auto-fit` over single tracks was wrong here:
+   a `dl` emits dt, dd, dt, dd as siblings, so an odd number of tracks puts a
+   value under somebody else's label. Four tracks keeps each pair together. */
+.facts-wide { grid-template-columns: repeat(2, minmax(110px, auto) minmax(0, 1fr)); gap: 6px 24px; }
 .facts dt { font-size: 13px; line-height: 22px; color: var(--text-secondary); }
 .facts dd { margin: 0; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
-.facts-wide dt { grid-column: auto; }
+
 
 /* ---------- tables -------------------------------------------------------- */
 
@@ -1338,7 +1341,11 @@ th.num .ov-sort { flex-direction: row-reverse; }
   overflow-wrap: anywhere;
   max-width: 34ch;
 }
-.ov-actions { white-space: nowrap; display: flex; gap: 8px; justify-content: flex-end; }
+/* `display: flex` on a `td` takes the cell out of the table's own layout: the
+   row's border stops where the flex box starts and the buttons hang off the
+   end of it. The cell stays a cell; the buttons are laid out inside it. */
+.ov-actions { white-space: nowrap; text-align: right; }
+.ov-actions .btn + .btn { margin-left: 8px; }
 .ov-spark { color: var(--chart-line); vertical-align: middle; }
 .ov-foot { margin-top: 16px; font-size: 13px; line-height: 22px; color: var(--text-secondary); }
 .row-open td { border-bottom-color: transparent; }
@@ -1415,6 +1422,7 @@ th.num .ov-sort { flex-direction: row-reverse; }
   .drawer-scrim { position: fixed; inset: 0; z-index: 74; background: var(--overlay); }
 
   .figures { grid-template-columns: 1fr; gap: 16px; }
+  .facts-wide { grid-template-columns: minmax(110px, auto) minmax(0, 1fr); }
   .details-grid { grid-template-columns: 1fr; }
   .cmp-sources, .cmp-sides, .routes { grid-template-columns: 1fr; }
   .drawer { width: 100vw; max-width: 100vw; border-left: 0; }

@@ -59,12 +59,20 @@ export function OpenPanel({
   const [cancelled, setCancelled] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
+  /**
+   * Takes an array, not the `FileList`.
+   *
+   * The input's value is reset after a choice so that picking the *same* file
+   * twice fires `change` the second time. Resetting it also empties the
+   * `FileList` — and a `FileList` is live, so a reference captured a line
+   * earlier empties with it. Every choice looked like a cancelled picker.
+   * Copying the entries out first is the fix, and the type is the reminder.
+   */
   const take = useCallback(
-    (files: FileList | null) => {
-      const list = files ? [...files] : [];
-      // An empty FileList is what the picker hands back when somebody closes
-      // it without choosing. That is a decision, not a fault, and it gets a
-      // quiet line rather than a red box.
+    (list: File[]) => {
+      // No files is what the picker hands back when somebody closes it without
+      // choosing. That is a decision, not a fault, and it gets a quiet line
+      // rather than a red box.
       if (!list.length) { setCancelled(true); return; }
       setCancelled(false);
       onFiles(list);
@@ -110,7 +118,11 @@ export function OpenPanel({
           accept=".jsonl,.json"
           className="sr-only"
           aria-label="Choose a transcript file"
-          onChange={(e) => { const f = e.target.files; e.target.value = ""; take(f); }}
+          onChange={(e) => {
+            const chosen = [...(e.target.files ?? [])];
+            e.target.value = "";
+            take(chosen);
+          }}
         />
       </div>
 
@@ -129,7 +141,7 @@ export function OpenPanel({
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           setOver(false);
-          take(e.dataTransfer.files);
+          take([...e.dataTransfer.files]);
         }}
       >
         <p className="dropzone-line">

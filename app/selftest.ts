@@ -360,7 +360,7 @@ function countPaintedTicks(n: number): { usable: boolean; groups: number; why: s
  * Changing the suite means changing this line, deliberately, in the same
  * commit.
  */
-const DECLARED_ASSERTIONS = 338;
+const DECLARED_ASSERTIONS = 353;
 
 /**
  * How many `ok(` and `skip(` call sites this file contains.
@@ -377,7 +377,7 @@ const DECLARED_ASSERTIONS = 338;
  * smaller number confidently, which is why this is now counted twice by methods
  * that fail differently and the two have to agree.
  */
-export const DECLARED_CALL_SITES = 305;
+export const DECLARED_CALL_SITES = 320;
 
 /**
  * Which mode the run is in, and what that mode is supposed to produce.
@@ -1051,6 +1051,96 @@ async function runBlocks(
       "the menu says what the summary does not contain", notes.join(" | "));
     shortcut("Escape");
     await until(() => document.querySelectorAll('[role="menuitem"]').length === 0, 60);
+  }
+
+  // ---- opening a file the reader cannot use -------------------------------
+  //
+  // Six states, all of which a person reaches by accident, and one of which
+  // was silently broken until somebody tried it: resetting the input so that
+  // choosing the *same* file twice fires `change` also empties the `FileList`,
+  // which is live — so a reference captured a line earlier emptied with it and
+  // every choice looked like a cancelled picker.
+  {
+    await need("opening a file the reader cannot use");
+
+    /** Hand the dialog a set of files, the way the picker does. */
+    const offer = async (files: File[]) => {
+      await click(".shell-bar button", /open session/i, "open the session dialog");
+      if (!(await until(() => !!document.querySelector(".dialog input[type=file]"), 120))) {
+        throw new Error("the Open session dialog has no file control");
+      }
+      const input = document.querySelector<HTMLInputElement>(".dialog input[type=file]")!;
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const dialogText = () => document.querySelector(".dialog")?.textContent ?? "";
+
+    // A dialog opened over a loaded session says what opening a file will do
+    // to it.
+    await click(".shell-bar button", /open session/i, "open the session dialog");
+    await until(() => !!document.querySelector(".dialog"), 120);
+    ok(/replaces the session on screen/.test(dialogText()),
+      "the dialog says a file will replace what is open");
+    ok(/Cancelling leaves it exactly as it is/.test(dialogText()),
+      "…and that cancelling will not");
+
+    // Cancelling is a decision, not a fault.
+    await offer([]);
+    await until(() => /No file chosen/.test(dialogText()), 120);
+    ok(/No file chosen. Nothing has changed./.test(dialogText()),
+      "a cancelled picker gets a quiet line", dialogText().slice(0, 60));
+    ok(!document.querySelector(".dialog .note-error"), "…and no error");
+    ok(api().view?.steps.length === DEMO_STEPS, "…and the session is untouched");
+
+    await offer([new File(["hello"], "notes.txt", { type: "text/plain" })]);
+    await until(() => !!document.querySelector(".dialog .note-error"), 180);
+    ok(/not a supported file/.test(dialogText()),
+      "an unsupported extension is named, not swallowed",
+      (document.querySelector(".dialog .note-error")?.textContent ?? "").slice(0, 70));
+    ok(/\.jsonl/.test(dialogText()) && /\.tape\.json/.test(dialogText()),
+      "…alongside what is supported");
+
+    await offer([new File([], "empty.jsonl", { type: "application/x-ndjson" })]);
+    await until(() => /is empty/.test(dialogText()), 180);
+    ok(/empty.jsonl is empty/.test(dialogText()),
+      "an empty file says it is empty rather than parsing to nothing",
+      dialogText().slice(dialogText().indexOf("empty.jsonl"), dialogText().indexOf("empty.jsonl") + 60));
+
+    await offer([new File(["not json\nnor this\n"], "broken.jsonl", { type: "application/x-ndjson" })]);
+    await until(() => /looked like a Claude Code transcript/.test(dialogText()), 240);
+    ok(/Nothing in broken.jsonl looked like a Claude Code transcript record/.test(dialogText()),
+      "an unparseable file says what it was not");
+    ok(!!document.querySelector(".dialog .note-more"),
+      "…with what the reader actually said behind a control");
+    ok(api().view?.steps.length === DEMO_STEPS,
+      "…and four bad files later the session on screen is still the one you had");
+
+    // A real one, twice. The second pick is the one the live-FileList bug ate.
+    const t0 = Date.parse("2026-11-11T09:00:00Z");
+    const good = new File([[0, 1, 2].map((i) => JSON.stringify({
+      type: "assistant", sessionId: "twice", uuid: "a" + i,
+      timestamp: new Date(t0 + i * 1000).toISOString(),
+      message: {
+        role: "assistant", id: "m" + i, model: "claude-opus-5",
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 * i,
+          cache_creation_input_tokens: 0 },
+        content: [{ type: "tool_use", id: "t" + i, name: "Bash", input: { cmd: "x" } }],
+      },
+    })).join("\n")], "twice.jsonl", { type: "application/x-ndjson" });
+
+    await offer([good]);
+    await until(() => api().view?.steps.length === 3, 300);
+    ok(api().view?.steps.length === 3, "a readable file opens",
+      String(api().view?.steps.length ?? 0));
+    ok(api().where === "overview", "…on the overview", api().where);
+    ok(!document.querySelector(".dialog"), "…and the dialog closes behind it");
+
+    await offer([good]);
+    await until(() => !document.querySelector(".dialog"), 300);
+    ok(api().view?.steps.length === 3, "…and choosing the same file again opens it again",
+      String(api().view?.steps.length ?? 0));
   }
 
   // ---- delegated work is visible even with no subagent file ---------------
