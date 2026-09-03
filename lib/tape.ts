@@ -146,6 +146,10 @@ export function tapeFromFile(file: TapeFile): Tape {
     steps,
     entries,
     body,
+    // A tape carries the projection, not the transcript. There is no original
+    // line to hand back, and re-serialising the projection and calling it one
+    // would be the exact lie "Raw record" exists to avoid.
+    raw: async () => null,
   };
 }
 

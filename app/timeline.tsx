@@ -1,31 +1,30 @@
 "use client";
 
-// The timeline: one tick per step on top, real elapsed time underneath.
+// Where you are in the run: one tick per step, thirty pixels tall.
 //
-// Two canvases sit on top of each other. The lower one holds the ticks, the
-// failure rail and the time axis, and is repainted only when the tape, the
-// size or the theme changes. The upper one holds the playhead and is repainted
-// on every move — it is two lines and a connector, so dragging across ten
-// thousand steps costs almost nothing.
+// This used to be four stacked bands — ticks, a failure rail, a row of clock
+// labels and an elapsed-time axis — eighty-four pixels of it, above a context
+// chart, above the content. That is a lot of instrument to read before you can
+// start. The elapsed-time half was not wrong, it was in the wrong place: it
+// now lives in the Context view next to the durations it explains, and what is
+// left here is a position control.
 //
-// A focusable div covers both and carries the ARIA slider semantics, because
-// canvas has none.
+// Two canvases on top of each other. The lower one holds the ticks and is
+// repainted when the tape, the size, the filter or the theme changes; the
+// upper one holds the playhead and is repainted on every move, so dragging
+// across ten thousand steps costs one line and a triangle per frame.
+//
+// A focusable div covers both and carries the slider semantics, because canvas
+// has none.
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { IDLE_GAP_MS, type Step } from "@/lib/format";
-import { fmtDuration } from "@/lib/summary";
-import { KIND_LABEL } from "./glyphs";
+import type { Step } from "@/lib/format";
+import { stepLabel } from "@/lib/labels";
 import { ctx2d } from "./canvas";
 
-// Four bands, top to bottom: the tick rail, the failure rail, a row of time
-// labels, and the elapsed-time axis. They are laid out by hand because they
-// have to stay clear of each other at every width.
 const PAD = 8;
-const RAIL_Y = 20;      // centre of the tick rail
-const RAIL_H = 30;
-const FAIL_Y = 45;      // centre of the failure rail
-const LABEL_Y = 58;     // baseline of the time labels
-const AXIS_Y = 72;      // centre of the elapsed-time axis
+export const TRACK_H = 30;
+const RAIL_Y = 15;
 
 type Props = {
   steps: Step[];
@@ -35,15 +34,22 @@ type Props = {
   mask?: Uint8Array | null;
   /** One byte per step: 1 handed its work to a subagent. */
   delegated?: Uint8Array | null;
-  /** n and p. The page decides whether they mean failures or matches. */
+  /** n and p. The owner decides whether they mean failures or matches. */
   onSeek?: (dir: 1 | -1) => void;
+  /** What a step is called on screen, for the slider's spoken value. */
+  shownIndex?: (globalIndex: number) => number;
+  /** The tool a step belongs to, so the spoken value names it. */
+  toolOf?: (globalIndex: number) => string;
   height?: number;
 };
 
 // Canvas colours live in CSS custom properties so themes reach the pixels, but
 // reading them forces a style recalc. They are read once per theme change and
-// held, because paintHead runs on every frame of a drag.
-const NAMES = ["--tick", "--tick-tool", "--risk", "--grid", "--text-3", "--idle", "--mono", "--accent"];
+// held, because the playhead repaints on every frame of a drag.
+const NAMES = [
+  "--chart-tick", "--chart-tick-tool", "--chart-fail", "--chart-grid",
+  "--chart-selected", "--text-accent",
+];
 type Palette = Record<string, string>;
 let palette: Palette | null = null;
 
@@ -64,28 +70,28 @@ function forgetPalette(): void {
 }
 
 /** The cross that marks a failure, drawn over whatever shape the step had.
- *  Failure is never signalled by colour alone: the tick itself changes shape,
- *  a marker appears on the rail below, and the panels say "failed" in words. */
+ *  Failure is never signalled by colour alone: the tick changes shape here,
+ *  and the list and the panels say "failed" in words. */
 function drawFail(g: CanvasRenderingContext2D, x: number, y: number, wide: boolean) {
   if (!wide) {
     // At tight spacing a failure is twice as wide and taller than its
-    // neighbours, so it still reads as different without any colour.
+    // neighbours, so it still reads as different with no colour at all.
     g.fillRect(x - 1, y - 8, 2, 16);
     return;
   }
   g.beginPath();
-  g.moveTo(x - 4.2, y - 4.2);
-  g.lineTo(x + 4.2, y + 4.2);
-  g.moveTo(x + 4.2, y - 4.2);
-  g.lineTo(x - 4.2, y + 4.2);
+  g.moveTo(x - 3.8, y - 3.8);
+  g.lineTo(x + 3.8, y + 3.8);
+  g.moveTo(x + 3.8, y - 3.8);
+  g.lineTo(x - 3.8, y + 3.8);
   g.stroke();
 }
 
-/** Same eight shapes as glyphs.tsx, drawn at tick scale. */
+/** The same eight shapes the legend draws, at tick scale. */
 function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: number, wide: boolean) {
   if (!wide) {
-    // Below ~3px of spacing the shapes stop being distinguishable, so the
-    // rail degrades to a density plot rather than lying about resolution.
+    // Below ~3px of spacing the shapes stop being distinguishable, so the rail
+    // degrades to a density plot rather than lying about resolution.
     g.fillRect(x - 0.5, y - 5, 1, 10);
     return;
   }
@@ -141,20 +147,19 @@ function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: numb
   }
 }
 
-export default function Timeline({ steps, pos, onPos, mask = null, delegated = null, onSeek, height = 84 }: Props) {
+export default function Timeline({
+  steps, pos, onPos, mask = null, delegated = null, onSeek, shownIndex, toolOf,
+  height = TRACK_H,
+}: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
   const head = useRef<HTMLCanvasElement>(null);
   const hit = useRef<HTMLDivElement>(null);
-  const size = useRef({ w: 0, h: height });
   const dragging = useRef(false);
   const raf = useRef(0);
   const pending = useRef(-1);
 
   const n = steps.length;
-  const firstT = n ? steps[0].t : 0;
-  const lastT = n ? steps[n - 1].t : 0;
-  const span = Math.max(1, lastT - firstT);
 
   const xOf = useCallback(
     (i: number, w: number) => PAD + ((i + 0.5) * (w - PAD * 2)) / Math.max(1, n),
@@ -164,10 +169,6 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
     (x: number, w: number) =>
       Math.max(0, Math.min(n - 1, Math.floor(((x - PAD) / (w - PAD * 2)) * n))),
     [n],
-  );
-  const tx = useCallback(
-    (t: number, w: number) => PAD + ((t - firstT) / span) * (w - PAD * 2),
-    [firstT, span],
   );
 
   // ---- static layer -------------------------------------------------------
@@ -179,7 +180,6 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = el.clientWidth;
     const h = el.clientHeight;
-    size.current = { w, h };
     cv.width = Math.round(w * dpr);
     cv.height = Math.round(h * dpr);
     const g = ctx2d(cv);
@@ -187,41 +187,21 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
 
-    const tick = cssVar("--tick") || "#788292";
-    const tool = cssVar("--tick-tool") || "#8f86c4";
-    const risk = cssVar("--risk") || "#e47777";
-    const grid = cssVar("--grid") || "rgba(255,255,255,.07)";
-    const dim = cssVar("--text-3") || "#788292";
-    const idle = cssVar("--idle") || "rgba(255,255,255,.055)";
-    const accent = cssVar("--accent") || "#8a7cf6";
+    const tick = cssVar("--chart-tick") || "#6b7686";
+    const tool = cssVar("--chart-tick-tool") || "#4a6bc4";
+    const risk = cssVar("--chart-fail") || "#b42318";
+    const grid = cssVar("--chart-grid") || "#dde4ee";
+    const accent = cssVar("--text-accent") || "#2f52b0";
 
-    // rail baselines
     g.strokeStyle = grid;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(PAD, RAIL_Y + RAIL_H / 2 + 0.5);
-    g.lineTo(w - PAD, RAIL_Y + RAIL_H / 2 + 0.5);
-    g.moveTo(PAD, AXIS_Y + 0.5);
-    g.lineTo(w - PAD, AXIS_Y + 0.5);
+    g.moveTo(PAD, RAIL_Y + 0.5);
+    g.lineTo(w - PAD, RAIL_Y + 0.5);
     g.stroke();
 
     const spacing = (w - PAD * 2) / Math.max(1, n);
     const wide = spacing >= 3;
-
-    // idle gaps, shaded on the time axis so a 40-minute pause reads as a pause
-    g.fillStyle = idle;
-    for (let i = 1; i < n; i++) {
-      const d = steps[i].t - steps[i - 1].t;
-      if (d <= IDLE_GAP_MS) continue;
-      const a = tx(steps[i - 1].t, w);
-      const b = tx(steps[i].t, w);
-      if (b - a < 1.5) continue;
-      g.fillRect(a, AXIS_Y - 7, b - a, 14);
-    }
-
-    // Ticks. A filter *dims* what does not match rather than removing it, so
-    // the density and position of every step stay honest — otherwise a
-    // filtered timeline lies about where the run spent its time.
     const cols = Math.max(1, Math.floor(w - PAD * 2));
     g.lineWidth = 1.25;
 
@@ -229,7 +209,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
       // Few enough steps that each gets its own shape. Dimmed first, matching
       // over the top, failures last, so nothing important is painted over.
       const passes: { keep: (i: number) => boolean; scale: number }[] = mask
-        ? [{ keep: (i) => !mask[i], scale: 0.18 }, { keep: (i) => !!mask[i], scale: 1 }]
+        ? [{ keep: (i) => !mask[i], scale: 0.22 }, { keep: (i) => !!mask[i], scale: 1 }]
         : [{ keep: () => true, scale: 1 }];
 
       for (const pass of passes) {
@@ -238,7 +218,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
         for (let i = 0; i < n; i++) {
           const s = steps[i];
           if (s.err || !pass.keep(i)) continue;
-          const alpha = (s.kind === "meta" ? 0.45 : 0.85) * pass.scale;
+          const alpha = (s.kind === "meta" ? 0.5 : 0.9) * pass.scale;
           if (s.kind !== lastKind) {
             const col = s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
             g.fillStyle = col;
@@ -262,13 +242,13 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
       }
     } else {
       // Below three pixels a step no longer has a shape of its own, and many
-      // steps share a column. Deciding what each column holds first turns
-      // ~7,700 draw calls into ~1,500 — which is what makes re-painting the
-      // rail on every keystroke of a search cheap enough to keep up.
-      const tone = new Uint8Array(cols);     // 0 empty · 1 ordinary · 2 tool
-      const solid = new Uint8Array(cols);    // holds at least one non-meta step
-      const held = new Uint16Array(cols);    // steps in this column
-      const hit = new Uint16Array(cols);     // matching steps in this column
+      // share a column. Deciding what each column holds first turns ~7,700
+      // draw calls into ~1,500, which is what keeps a repaint on every
+      // keystroke of a search cheap enough to keep up.
+      const tone = new Uint8Array(cols);   // 0 empty · 1 ordinary · 2 tool
+      const solid = new Uint8Array(cols);  // holds at least one non-meta step
+      const held = new Uint16Array(cols);
+      const hits = new Uint16Array(cols);
       const err = new Uint8Array(cols);
       const errHit = new Uint8Array(cols);
 
@@ -285,7 +265,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
         if (t > tone[c]) tone[c] = t;
         if (s.kind !== "meta") solid[c] = 1;
         held[c]++;
-        if (matched) hit[c]++;
+        if (matched) hits[c]++;
       }
 
       if (!mask) {
@@ -295,18 +275,18 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
           const style = tone[c] * 2 + solid[c];
           if (style !== lastStyle) {
             g.fillStyle = tone[c] === 2 ? tool : tick;
-            g.globalAlpha = solid[c] ? 0.85 : 0.45;
+            g.globalAlpha = solid[c] ? 0.9 : 0.5;
             lastStyle = style;
           }
           g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
         }
       } else {
-        // A column here holds about five steps, so "bright if any of them
-        // matched" would light up almost the whole rail and tell you nothing.
-        // The dim base is every step — position and density stay honest — and
-        // the bright bar's *height* is the share of that column that matched,
-        // which makes a filtered rail a density plot rather than a blanket.
-        g.globalAlpha = 0.18;
+        // A column holds about five steps, so "bright if any of them matched"
+        // would light up the whole rail and say nothing. The dim base is every
+        // step — position and density stay honest — and the bright bar's
+        // *height* is the share of that column that matched, which makes a
+        // filtered rail a density plot rather than a blanket.
+        g.globalAlpha = 0.22;
         g.fillStyle = tick;
         for (let c = 0; c < cols; c++) {
           if (tone[c]) g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
@@ -314,13 +294,13 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
         g.globalAlpha = 1;
         let lastTone = -1;
         for (let c = 0; c < cols; c++) {
-          if (!hit[c]) continue;
+          if (!hits[c]) continue;
           if (tone[c] !== lastTone) {
             g.fillStyle = tone[c] === 2 ? tool : tick;
             lastTone = tone[c];
           }
-          const h = Math.max(3, Math.round((10 * hit[c]) / held[c]));
-          g.fillRect(PAD + c, RAIL_Y - h / 2, 1, h);
+          const bh = Math.max(3, Math.round((10 * hits[c]) / held[c]));
+          g.fillRect(PAD + c, RAIL_Y - bh / 2, 1, bh);
         }
       }
 
@@ -328,75 +308,33 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
       let lastErrAlpha = -1;
       for (let c = 0; c < cols; c++) {
         if (!err[c]) continue;
-        const alpha = mask && !errHit[c] ? 0.18 : 1;
+        const alpha = mask && !errHit[c] ? 0.22 : 1;
         if (alpha !== lastErrAlpha) { g.globalAlpha = alpha; lastErrAlpha = alpha; }
         g.fillRect(PAD + c - 1, RAIL_Y - 8, 2, 16);
       }
     }
+
     // Delegations, over everything else. A handful per session, and each one
-    // stands for a whole run this file does not contain — the stem is there to
-    // say the work went somewhere.
+    // stands for a whole run this file does not contain.
     if (delegated) {
       g.strokeStyle = accent;
       g.fillStyle = accent;
       g.lineWidth = 1.3;
       for (let i = 0; i < n; i++) {
         if (!delegated[i]) continue;
-        g.globalAlpha = mask && !mask[i] ? 0.28 : 1;
+        g.globalAlpha = mask && !mask[i] ? 0.3 : 1;
         const x = Math.round(xOf(i, w)) + 0.5;
         g.beginPath();
         g.moveTo(x, RAIL_Y - 9);
-        g.lineTo(x, RAIL_Y - 4);
+        g.lineTo(x, RAIL_Y - 5);
         g.stroke();
         g.beginPath();
-        g.arc(x, RAIL_Y - 10.5, 1.7, 0, Math.PI * 2);
+        g.arc(x, RAIL_Y - 11, 1.7, 0, Math.PI * 2);
         g.fill();
       }
     }
-
     g.globalAlpha = 1;
-    g.lineWidth = 1.25;
-
-    // time axis marks — aggregated the same way once there are more steps than
-    // pixels, since past that point the extra draws land on top of each other.
-    g.fillStyle = dim;
-    g.globalAlpha = 0.75;
-    if (n > cols) {
-      const axis = new Uint8Array(cols);
-      for (let i = 0; i < n; i++) {
-        axis[Math.min(cols - 1, Math.max(0, Math.floor(tx(steps[i].t, w) - PAD)))] = 1;
-      }
-      for (let c = 0; c < cols; c++) if (axis[c]) g.fillRect(PAD + c, AXIS_Y - 3, 1, 6);
-    } else {
-      for (let i = 0; i < n; i++) g.fillRect(tx(steps[i].t, w) - 0.4, AXIS_Y - 3, 0.8, 6);
-    }
-    g.globalAlpha = 1;
-
-    // time labels at the ends plus the largest gap in the middle
-    g.font = "9px " + (cssVar("--mono") || "monospace");
-    g.fillStyle = dim;
-    g.textBaseline = "middle";
-    if (lastT > firstT) {
-      g.textAlign = "left";
-      g.fillText(new Date(firstT).toLocaleString(), PAD, LABEL_Y);
-      g.textAlign = "right";
-      g.fillText(fmtDuration(lastT - firstT) + " wall", w - PAD, LABEL_Y);
-      let bi = -1;
-      let bd = 0;
-      for (let i = 1; i < n; i++) {
-        const d = steps[i].t - steps[i - 1].t;
-        if (d > bd) { bd = d; bi = i; }
-      }
-      if (bi > 0 && bd > IDLE_GAP_MS) {
-        const a = tx(steps[bi - 1].t, w);
-        const b = tx(steps[bi].t, w);
-        if (b - a > 46) {
-          g.textAlign = "center";
-          g.fillText("idle " + fmtDuration(bd), (a + b) / 2, LABEL_Y);
-        }
-      }
-    }
-  }, [n, steps, tx, xOf, firstT, lastT, mask, delegated]);
+  }, [n, steps, xOf, mask, delegated]);
 
   // ---- playhead layer -----------------------------------------------------
 
@@ -416,33 +354,16 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
       if (!g) return;
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);
-      const s = steps[Math.max(0, Math.min(n - 1, p))];
-      if (!s) return;
+      if (!steps[Math.max(0, Math.min(n - 1, p))]) return;
 
-      const accent = cssVar("--accent") || "#8a7cf6";
+      const accent = cssVar("--chart-selected") || "#315ccd";
       const x = xOf(p, w);
-      const t2 = tx(s.t, w);
 
       g.strokeStyle = accent;
-      g.lineWidth = 1;
+      g.lineWidth = 1.5;
       g.beginPath();
-      g.moveTo(Math.round(x) + 0.5, 4);
-      g.lineTo(Math.round(x) + 0.5, FAIL_Y + 5);
-      g.stroke();
-
-      // the connector: where this step sits in step order vs in real time
-      g.globalAlpha = 0.55;
-      g.setLineDash([2, 2]);
-      g.beginPath();
-      g.moveTo(x, FAIL_Y + 5);
-      g.lineTo(t2, AXIS_Y - 7);
-      g.stroke();
-      g.setLineDash([]);
-      g.globalAlpha = 1;
-
-      g.beginPath();
-      g.moveTo(Math.round(t2) + 0.5, AXIS_Y - 7);
-      g.lineTo(Math.round(t2) + 0.5, AXIS_Y + 7);
+      g.moveTo(Math.round(x) + 0.5, 5);
+      g.lineTo(Math.round(x) + 0.5, h - 3);
       g.stroke();
 
       g.fillStyle = accent;
@@ -453,7 +374,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
       g.closePath();
       g.fill();
     },
-    [n, steps, tx, xOf],
+    [n, steps, xOf],
   );
 
   useLayoutEffect(() => {
@@ -536,8 +457,9 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
   };
 
   const cur = steps[Math.max(0, Math.min(n - 1, pos))];
+  const shown = cur && shownIndex ? shownIndex(cur.i) || pos + 1 : pos + 1;
   const valueText = cur
-    ? `step ${pos + 1} of ${n}, ${KIND_LABEL[cur.kind]}${cur.tool ? " " + cur.tool : ""}${cur.err ? ", failed" : ""}`
+    ? `step ${shown} of ${n}, ${stepLabel(cur, toolOf?.(cur.i))}${cur.err ? ", failed" : ""}`
     : "no steps";
 
   return (
@@ -549,7 +471,7 @@ export default function Timeline({ steps, pos, onPos, mask = null, delegated = n
         ref={hit}
         role="slider"
         tabIndex={0}
-        aria-label="Playhead. Arrow keys step, Home and End jump to the ends, n and p jump to the next and previous failed step."
+        aria-label="Position in the session. Arrow keys step, Home and End jump to the ends, n and p jump to the next and previous failed step."
         aria-valuemin={1}
         aria-valuemax={Math.max(1, n)}
         aria-valuenow={pos + 1}

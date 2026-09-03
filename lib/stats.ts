@@ -89,7 +89,12 @@ export function sessionStats(
   entries: Entry[],
   pairs: Map<number, number>,
 ): SessionStats {
-  const sum = summarise({ meta, steps, entries, body: async () => ({ text: null, input: undefined, parts: [], placeholder: true, chars: 0 }) });
+  // summarise() reads the index only; the readers are here to satisfy the type.
+  const sum = summarise({
+    meta, steps, entries,
+    body: async () => ({ text: null, input: undefined, parts: [], placeholder: true, chars: 0 }),
+    raw: async () => null,
+  });
   const dels = findDelegations(steps, pairs);
 
   const tools: Record<string, number> = {};

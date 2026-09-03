@@ -1,0 +1,148 @@
+/* ============================================================================
+   Semantic tokens. One definition of every colour in the application.
+
+   Components name a role — `text-secondary`, `error-bg`, `chart-line` — and
+   never a hex value, so a colour that turns out to be unreadable is fixed once
+   here rather than in the fourteen places that copied it. The canvases read
+   the same custom properties through getComputedStyle, which is why the chart
+   colours are tokens too and not literals inside the paint functions.
+
+   Every pair that carries text is measured by scripts/contrast.mjs against the
+   surface it is actually painted on, and verify.mjs runs that measurement. A
+   value below the ratio its role needs is a failed check, not a judgement
+   call — which is what stops "we will darken it later" from becoming the
+   permanent state of a grey.
+   ========================================================================= */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-page: #f6f7f9;
+  --bg-surface: #ffffff;
+  --bg-subtle: #eff2f6;
+  --bg-hover: #e8edf4;
+  --bg-selected: #eaf0ff;
+
+  --text-primary: #18212f;
+  --text-secondary: #4b5768;
+  --text-muted: #55606f;
+  --text-accent: #2f52b0;
+
+  --border-subtle: #dee4eb;
+  --border-control: #767f8d;
+  --focus-ring: #315ccd;
+
+  --action-bg: #315ccd;
+  --action-hover: #294eaf;
+  --action-pressed: #234293;
+  --action-text: #ffffff;
+
+  --success-text: #166534;
+  --success-bg: #f0fdf4;
+  --warning-text: #7a460c;
+  --warning-bg: #fffbeb;
+  --error-text: #b42318;
+  --error-bg: #fef3f2;
+  --info-text: #2f52b0;
+  --info-bg: #eef3ff;
+
+  --code-bg: #f3f5f8;
+  --code-text: #243348;
+  --code-comment: #55606f;
+  --code-keyword: #6740a1;
+  --code-string: #17684c;
+  --code-number: #8a4c16;
+
+  --overlay: rgba(24, 33, 47, 0.32);
+  --shadow-menu: 0 8px 24px rgba(24, 33, 47, 0.12);
+  --shadow-panel: 0 12px 40px rgba(24, 33, 47, 0.16);
+
+  /* ---- canvas ----------------------------------------------------------
+     Read through getComputedStyle by timeline.tsx, context-chart.tsx and
+     time-track.tsx. Declared here so a theme switch reaches the pixels. */
+  --chart-line: #315ccd;
+  --chart-fill: rgba(49, 92, 205, 0.1);
+  --chart-grid: #dde4ee;
+  --chart-axis-text: #4b5768;
+  --chart-tick: #6b7686;
+  --chart-tick-tool: #4a6bc4;
+  --chart-fail: #b42318;
+  --chart-warn: #7a460c;
+  --chart-idle: rgba(24, 33, 47, 0.06);
+  --chart-selected: #315ccd;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-page: #101419;
+  --bg-surface: #181e26;
+  --bg-subtle: #202833;
+  --bg-hover: #283444;
+  --bg-selected: #22324f;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #afbdcf;
+  --text-muted: #95a3b5;
+  --text-accent: #a7c2ff;
+
+  --border-subtle: #303b49;
+  --border-control: #8494a9;
+  --focus-ring: #a7c2ff;
+
+  --action-bg: #91b1ff;
+  --action-hover: #a7c2ff;
+  --action-pressed: #7ea3fa;
+  --action-text: #101419;
+
+  --success-text: #86efac;
+  --success-bg: #182e24;
+  --warning-text: #f4d06f;
+  --warning-bg: #2c281b;
+  --error-text: #fda29b;
+  --error-bg: #351d22;
+  --info-text: #a7c2ff;
+  --info-bg: #1d2b45;
+
+  --code-bg: #111821;
+  --code-text: #d7e2f2;
+  --code-comment: #95a3b5;
+  --code-keyword: #c6a8ed;
+  --code-string: #91d5b2;
+  --code-number: #efc28d;
+
+  --overlay: rgba(0, 0, 0, 0.48);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --chart-line: #91b1ff;
+  --chart-fill: rgba(145, 177, 255, 0.12);
+  --chart-grid: #334155;
+  --chart-axis-text: #afbdcf;
+  --chart-tick: #8d9db1;
+  --chart-tick-tool: #91b1ff;
+  --chart-fail: #fda29b;
+  --chart-warn: #f4d06f;
+  --chart-idle: rgba(255, 255, 255, 0.06);
+  --chart-selected: #a7c2ff;
+}
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", monospace;
+
+  --radius-control: 8px;
+  --radius-surface: 12px;
+  --radius-menu: 10px;
+
+  --gutter: 32px;
+}
+
+@media (max-width: 1023px) {
+  :root { --gutter: 24px; }
+}
+
+@media (max-width: 719px) {
+  :root { --gutter: 16px; }
+}
