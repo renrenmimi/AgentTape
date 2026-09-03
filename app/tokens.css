@@ -1,7 +1,7 @@
 /* ============================================================================
    Semantic tokens. One definition of every colour in the application.
 
-   Components name a role — `text-secondary`, `error-bg`, `chart-line` — and
+   Components name a role — `text-secondary`, `danger-soft`, `chart-line` — and
    never a hex value, so a colour that turns out to be unreadable is fixed once
    here rather than in the fourteen places that copied it. The canvases read
    the same custom properties through getComputedStyle, which is why the chart
@@ -12,6 +12,12 @@
    value below the ratio its role needs is a failed check, not a judgement
    call — which is what stops "we will darken it later" from becoming the
    permanent state of a grey.
+
+   Where a brand colour cannot carry text, it keeps its job and gains a
+   companion rather than being replaced. `--accent` is the identity: it fills
+   buttons, draws marks and rings, and needs 3:1. `--text-accent` is the same
+   family darkened until a link on white clears 4.5:1. Using one value for both
+   would either wash out the brand or ship an unreadable link.
    ========================================================================= */
 
 :root,
@@ -20,112 +26,135 @@
 
   --bg-page: #f6f7f9;
   --bg-surface: #ffffff;
-  --bg-subtle: #eff2f6;
-  --bg-hover: #e8edf4;
-  --bg-selected: #eaf0ff;
+  --bg-subtle: #f0f2f6;
+  --bg-hover: #e9edf3;
+  --bg-selected: #e8ecff;
 
-  --text-primary: #18212f;
-  --text-secondary: #4b5768;
-  --text-muted: #55606f;
-  --text-accent: #2f52b0;
+  --text-primary: #18202b;
+  /* #667085 as specified reads 4.44:1 on --bg-subtle and 4.23:1 on
+     --bg-selected. Two clicks darker clears both, and is indistinguishable
+     from the specified value beside anything but itself. */
+  --text-secondary: #5f6879;
+  --text-muted: #646e80;
+  /* The brand accent darkened until a link on white clears 4.5:1. */
+  --text-accent: #5766b4;
 
-  --border-subtle: #dee4eb;
+  --border-subtle: #d7dde7;
+  /* A decorative hairline is 1.4:1 and that is fine; the visible edge of an
+     input or a secondary button is information and needs 3:1. */
   --border-control: #767f8d;
-  --focus-ring: #315ccd;
+  --focus-ring: #5f70c6;
 
-  --action-bg: #315ccd;
-  --action-hover: #294eaf;
-  --action-pressed: #234293;
+  /* White text on the specified #6F82E6 is 3.49:1. The fill is darkened to the
+     first value that carries it, and the accent itself keeps its job below. */
+  --action-bg: #5f70c6;
+  --action-hover: #5165b5;
+  --action-pressed: #45589f;
   --action-text: #ffffff;
+
+  /* The identity: fills, marks, rings and rails. A 3:1 role, not a text one. */
+  --accent: #6f82e6;
+  --accent-hover: #5d70d3;
+  --accent-soft: #e8ecff;
 
   --success-text: #166534;
   --success-bg: #f0fdf4;
-  --warning-text: #7a460c;
-  --warning-bg: #fffbeb;
-  --error-text: #b42318;
-  --error-bg: #fef3f2;
-  --info-text: #2f52b0;
-  --info-bg: #eef3ff;
+  --warning-text: #8a681a;
+  --warning-bg: #fff6d8;
+  /* #B84B58 reads 4.38:1 on its own soft background and 4.49:1 on a selected
+     row. Darkened until it clears both, plus white. */
+  --error-text: #af4854;
+  --error-bg: #fbecef;
+  --info-text: #5766b4;
+  --info-bg: #e8ecff;
 
-  --code-bg: #f3f5f8;
-  --code-text: #243348;
-  --code-comment: #55606f;
+  --code-bg: #f0f2f6;
+  --code-text: #22293a;
+  --code-comment: #5f6879;
   --code-keyword: #6740a1;
   --code-string: #17684c;
   --code-number: #8a4c16;
 
-  --overlay: rgba(24, 33, 47, 0.32);
-  --shadow-menu: 0 8px 24px rgba(24, 33, 47, 0.12);
-  --shadow-panel: 0 12px 40px rgba(24, 33, 47, 0.16);
+  --overlay: rgba(24, 32, 43, 0.32);
+  --shadow-menu: 0 8px 24px rgba(24, 32, 43, 0.12);
+  --shadow-panel: 0 12px 40px rgba(24, 32, 43, 0.16);
 
   /* ---- canvas ----------------------------------------------------------
      Read through getComputedStyle by timeline.tsx, context-chart.tsx and
-     time-track.tsx. Declared here so a theme switch reaches the pixels. */
-  --chart-line: #315ccd;
-  --chart-fill: rgba(49, 92, 205, 0.1);
-  --chart-grid: #dde4ee;
-  --chart-axis-text: #4b5768;
-  --chart-tick: #6b7686;
-  --chart-tick-tool: #4a6bc4;
-  --chart-fail: #b42318;
-  --chart-warn: #7a460c;
-  --chart-idle: rgba(24, 33, 47, 0.06);
-  --chart-selected: #315ccd;
+     time-track.tsx. Declared here so a theme switch reaches the pixels.
+
+     The rail's grammar is height and colour, not shape vocabulary: ordinary
+     steps are short and grey, events are tall and semantic. `chart-step` is
+     the quiet one and is deliberately the lowest-contrast mark on the page. */
+  --chart-line: #6f82e6;
+  --chart-fill: rgba(111, 130, 230, 0.12);
+  --chart-grid: #dde3ed;
+  --chart-axis-text: #5f6879;
+  --chart-step: #97a1b2;
+  --chart-tool: #7b88a6;
+  --chart-fail: #af4854;
+  --chart-warn: #8a681a;
+  --chart-idle: rgba(24, 32, 43, 0.06);
+  --chart-selected: #5f70c6;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-page: #101419;
-  --bg-surface: #181e26;
-  --bg-subtle: #202833;
-  --bg-hover: #283444;
-  --bg-selected: #22324f;
+  --bg-page: #0f1318;
+  --bg-surface: #181d24;
+  --bg-subtle: #1d232c;
+  --bg-hover: #232b36;
+  --bg-selected: #293454;
 
-  --text-primary: #e8edf5;
-  --text-secondary: #afbdcf;
-  --text-muted: #95a3b5;
-  --text-accent: #a7c2ff;
+  --text-primary: #f1f4f8;
+  --text-secondary: #a6b0be;
+  --text-muted: #98a3b1;
+  --text-accent: #95a6ff;
 
-  --border-subtle: #303b49;
-  --border-control: #8494a9;
-  --focus-ring: #a7c2ff;
+  --border-subtle: #353e4a;
+  --border-control: #7f8b9b;
+  --focus-ring: #95a6ff;
 
-  --action-bg: #91b1ff;
-  --action-hover: #a7c2ff;
-  --action-pressed: #7ea3fa;
-  --action-text: #101419;
+  --action-bg: #95a6ff;
+  --action-hover: #aab8ff;
+  --action-pressed: #7e91f0;
+  --action-text: #0f1318;
+
+  --accent: #95a6ff;
+  --accent-hover: #aab8ff;
+  --accent-soft: #293454;
 
   --success-text: #86efac;
-  --success-bg: #182e24;
-  --warning-text: #f4d06f;
-  --warning-bg: #2c281b;
-  --error-text: #fda29b;
-  --error-bg: #351d22;
-  --info-text: #a7c2ff;
-  --info-bg: #1d2b45;
+  --success-bg: #16281f;
+  --warning-text: #e2c062;
+  --warning-bg: #342e1d;
+  --error-text: #f08c92;
+  --error-bg: #402329;
+  --info-text: #95a6ff;
+  --info-bg: #293454;
 
-  --code-bg: #111821;
-  --code-text: #d7e2f2;
-  --code-comment: #95a3b5;
+  --code-bg: #12171e;
+  --code-text: #d7e0ee;
+  --code-comment: #98a3b1;
   --code-keyword: #c6a8ed;
   --code-string: #91d5b2;
   --code-number: #efc28d;
 
-  --overlay: rgba(0, 0, 0, 0.48);
+  --overlay: rgba(0, 0, 0, 0.5);
   --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.5);
 
-  --chart-line: #91b1ff;
-  --chart-fill: rgba(145, 177, 255, 0.12);
-  --chart-grid: #334155;
-  --chart-axis-text: #afbdcf;
-  --chart-tick: #8d9db1;
-  --chart-tick-tool: #91b1ff;
-  --chart-fail: #fda29b;
-  --chart-warn: #f4d06f;
+  --chart-line: #95a6ff;
+  --chart-fill: rgba(149, 166, 255, 0.14);
+  --chart-grid: #313b48;
+  --chart-axis-text: #a6b0be;
+  --chart-step: #7d8899;
+  --chart-tool: #8e9ab4;
+  --chart-fail: #f08c92;
+  --chart-warn: #e2c062;
   --chart-idle: rgba(255, 255, 255, 0.06);
-  --chart-selected: #a7c2ff;
+  --chart-selected: #95a6ff;
 }
 
 :root {

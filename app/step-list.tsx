@@ -18,7 +18,7 @@
 // rather than measured because a measure-then-reflow pass on a list this long
 // is the thing that makes scrolling stutter.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Step } from "@/lib/format";
 import { stepLabel } from "@/lib/labels";
 import { fmtInt } from "@/lib/summary";
@@ -42,10 +42,20 @@ type Props = {
   toolOf: (globalIndex: number) => string;
   /** Bumped by the owner to ask the list to scroll the selection into view. */
   revealKey: number;
+  /**
+   * Where the list was scrolled to, held by the owner.
+   *
+   * Replay unmounts when another view is shown, so anything the list keeps to
+   * itself is gone by the time you come back — and coming back to the top of a
+   * six-thousand-row list you had scrolled halfway down is the whole reason
+   * people stop trusting a back button.
+   */
+  scrollTop: number;
+  onScrollTop: (y: number) => void;
 };
 
 export default function StepList({
-  steps, pos, onPos, mask, delegated, shownIndex, toolOf, revealKey,
+  steps, pos, onPos, mask, delegated, shownIndex, toolOf, revealKey, scrollTop: saved, onScrollTop,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -67,8 +77,22 @@ export default function StepList({
     raf.current = requestAnimationFrame(() => {
       raf.current = 0;
       const el = scroller.current;
-      if (el) setScrollTop(el.scrollTop);
+      if (!el) return;
+      setScrollTop(el.scrollTop);
+      onScrollTop(el.scrollTop);
     });
+  }, [onScrollTop]);
+
+  // Restore before paint, and before the reveal effect below decides whether
+  // the selection is off screen — otherwise it measures against a list that is
+  // momentarily at the top and scrolls away from where you were.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !saved) return;
+    el.scrollTop = saved;
+    setScrollTop(saved);
+    // Mount only: after that the list owns its own position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
@@ -85,7 +109,8 @@ export default function StepList({
     const want = Math.max(0, Math.min(n * ROW - h, top - h * 0.33));
     el.scrollTop = want;
     setScrollTop(want);
-  }, [pos, n, viewH, revealKey]);
+    onScrollTop(want);
+  }, [pos, n, viewH, revealKey, onScrollTop]);
 
   const [from, to] = useMemo(() => {
     const first = Math.max(0, Math.floor(scrollTop / ROW) - OVER);

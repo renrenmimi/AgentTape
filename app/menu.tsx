@@ -38,9 +38,13 @@ type Props = {
   /** "action" gives the trigger the secondary-button look; "quiet" is bare. */
   look?: "action" | "quiet";
   align?: "start" | "end";
+  /** Put on the host, so a stylesheet can decide whether this menu is here. */
+  className?: string;
 };
 
-export default function Menu({ label, items, icon, look = "action", align = "end" }: Props) {
+export default function Menu({
+  label, items, icon, look = "action", align = "end", className = "",
+}: Props) {
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -96,7 +100,7 @@ export default function Menu({ label, items, icon, look = "action", align = "end
   };
 
   return (
-    <div className="menu-host">
+    <div className={"menu-host " + className}>
       <button
         type="button"
         ref={trigger}

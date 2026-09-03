@@ -60,6 +60,20 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
 const DEMO_HINT =
   "This is the demo. Start with a tool failure, then look at the context jump.";
 
+/**
+ * Whether the demo hint has been dismissed. A boolean, the same class of thing
+ * as the theme — no session content goes near storage.
+ */
+const HINT_KEY = "agenttape-demo-hint-dismissed";
+
+const hintDismissed = (): boolean => {
+  try {
+    return window.localStorage.getItem(HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
 export default function Page() {
   // ---- the session --------------------------------------------------------
   const [tape, setTape] = useState<Tape | null>(null);
@@ -83,7 +97,18 @@ export default function Page() {
   const [keysOpen, setKeysOpen] = useState(false);
   const [inside, setInside] = useState(-1);
   const [visitedReplay, setVisitedReplay] = useState(false);
+  // Server-rendered as "not dismissed" and corrected after mount, so the first
+  // client render matches the server's and nothing flashes.
   const [hintOff, setHintOff] = useState(false);
+  useEffect(() => { if (hintDismissed()) setHintOff(true); }, []);
+  const dismissHint = useCallback(() => {
+    setHintOff(true);
+    try {
+      window.localStorage.setItem(HINT_KEY, "1");
+    } catch {
+      /* private mode: it stays dismissed for this visit */
+    }
+  }, []);
   /**
    * Bumped whenever a session opens or closes.
    *
@@ -101,6 +126,8 @@ export default function Page() {
   const [entriesOpen, setEntriesOpen] = useState<Set<number>>(() => new Set());
   const [follow, setFollow] = useState(true);
   const [revealKey, setRevealKey] = useState(0);
+  /** Where the step list was scrolled to. Held here so a view switch keeps it. */
+  const listScroll = useRef(0);
   const [compareB, setCompareB] = useState<Tape | null>(null);
 
   // ---- loading ------------------------------------------------------------
@@ -296,10 +323,10 @@ export default function Page() {
     setView("replay");
     setVisitedReplay(true);
     setRevealKey((k) => k + 1);
-    // Focus the panel that now holds the evidence, so a keyboard user is where
-    // the answer is rather than back at the top of the page.
+    // Focus the heading of the step that now holds the evidence, so a keyboard
+    // user is where the answer is rather than back at the top of the page.
     window.setTimeout(() => {
-      document.getElementById("detail-panel")?.focus();
+      document.getElementById("step-heading")?.focus();
     }, 0);
   }, []);
 
@@ -349,7 +376,7 @@ export default function Page() {
     setTab("details");
     setLeftMode("steps");
     setVisitedReplay(false);
-    setHintOff(false);
+    listScroll.current = 0;
     // Everything arrives at the overview, whether it came from the landing
     // page, the global Open button or the session index.
     setView("overview");
@@ -1086,7 +1113,7 @@ export default function Page() {
           onContext={() => inspect(
             summary.jumpBy > 0 ? summary.jumpAt : curGlobal, "context")}
           hint={sourceKind === "demo" && !hintOff ? DEMO_HINT : ""}
-          onDismissHint={() => setHintOff(true)}
+          onDismissHint={dismissHint}
         />
       ) : view === "compare" ? (
         <Compare
@@ -1147,6 +1174,8 @@ export default function Page() {
           follow={follow}
           onFollow={setFollow}
           revealKey={revealKey}
+          listScroll={listScroll.current}
+          onListScroll={(y) => { listScroll.current = y; }}
         />
       )}
     </div>

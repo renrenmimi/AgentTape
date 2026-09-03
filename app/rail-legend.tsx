@@ -1,25 +1,31 @@
 "use client";
 
-// What the marks on the position rail mean.
+// The key to the rail: three levels, not eight shapes.
 //
-// The rail draws a different shape per kind of step and a different one again
-// for a failure, which is what keeps it readable with no colour perception at
-// all. That is only worth anything if somebody can find out what the shapes
-// are — and the old answer, a permanent band of eight glyphs and their names
-// above the content, cost more room than it was worth to a reader who mostly
-// wants the list.
+// The rail's grammar is height and colour. Quiet things are short and grey;
+// events are tall and semantic; the current step is a full-height line. That
+// is learnable in one look, which is the point — but it still has to be
+// *stated* somewhere, and the words come first everywhere else: every row in
+// the step list says what its step is, and every event on the rail is a button
+// whose accessible name reads "Step 14 · Edit failed".
 //
-// So the words come first: every step in the list says what it is, in full.
-// This is the legend for the rail, one control away, for the moment somebody
-// looks at the strip and wonders. Nothing is only in here.
+// So this is small, labelled `Key` rather than a bare question mark, and shut
+// by default. It draws the real marks at the size the rail draws them, because
+// a legend of coloured squares standing in for the marks is a legend of
+// coloured squares.
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { StepKind } from "@/lib/format";
-import { KIND_NAME } from "@/lib/labels";
-import { DelegateGlyph, FailGlyph, KindGlyph } from "./glyphs";
-import { HelpIcon } from "./icons";
 
-const KINDS: StepKind[] = ["user", "text", "thinking", "tool-call", "tool-result", "system"];
+type Row = { cls: string; name: string; what: string };
+
+const ROWS: Row[] = [
+  { cls: "key-step", name: "Step", what: "an ordinary step — texture, so you can see where the run is dense" },
+  { cls: "key-tool", name: "Tool call", what: "slightly taller, because tool calls are the shape of a run" },
+  { cls: "key-fail", name: "Failure", what: "tall, red, square cap" },
+  { cls: "key-compaction", name: "Compaction", what: "tall, amber, diamond cap" },
+  { cls: "key-delegation", name: "Delegation", what: "a dot on a stem" },
+  { cls: "key-now", name: "Current step", what: "full height, with a triangle at the top" },
+];
 
 export default function RailLegend({ delegations }: { delegations: boolean }) {
   const [open, setOpen] = useState(false);
@@ -35,24 +41,25 @@ export default function RailLegend({ delegations }: { delegations: boolean }) {
     return () => document.removeEventListener("mousedown", onDown, true);
   }, [open]);
 
+  const rows = delegations ? ROWS : ROWS.filter((r) => r.cls !== "key-delegation");
+
   return (
     <div className="popover-host" ref={host}>
       <button
         type="button"
-        className="btn btn-sm btn-icon btn-quiet"
-        aria-label="What the marks on the position rail mean"
+        className="btn btn-sm btn-quiet"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         onClick={() => setOpen((v) => !v)}
       >
-        <HelpIcon />
+        Key
       </button>
       {open && (
         <div
           className="popover popover-narrow"
           id={id}
           role="group"
-          aria-label="Marks on the position rail"
+          aria-label="What the marks on the rail mean"
           onKeyDown={(e) => {
             if (e.key !== "Escape") return;
             e.stopPropagation();
@@ -61,28 +68,20 @@ export default function RailLegend({ delegations }: { delegations: boolean }) {
           }}
         >
           <h3 className="popover-title">Marks on the rail</h3>
-          <ul className="legend">
-            {KINDS.map((k) => (
-              <li key={k}>
-                <span className="legend-mark"><KindGlyph kind={k} size={12} /></span>
-                <span>{KIND_NAME[k]}</span>
-              </li>
+          <dl className="key-list">
+            {rows.map((r) => (
+              <div className="key-row" key={r.cls}>
+                <dt>
+                  <span className={"key-mark " + r.cls} aria-hidden />
+                  <span>{r.name}</span>
+                </dt>
+                <dd>{r.what}</dd>
+              </div>
             ))}
-            <li className="legend-fail">
-              <span className="legend-mark"><FailGlyph size={12} /></span>
-              <span>Failed — taller and a different shape, not only a different colour</span>
-            </li>
-            {delegations && (
-              <li className="legend-delegate">
-                <span className="legend-mark"><DelegateGlyph size={12} /></span>
-                <span>Delegated to a subagent</span>
-              </li>
-            )}
-          </ul>
+          </dl>
           <p className="sec-lead dim">
-            Below about three pixels a step the shapes stop being distinguishable, so the rail
-            becomes a density plot rather than pretending to a resolution it does not have. The
-            list beside it always says what each step is, in words.
+            Every event on the rail is also a button: reach it with Tab, and its name is read
+            out in full. Hovering or focusing anywhere on the rail names the step under it.
           </p>
         </div>
       )}

@@ -93,6 +93,21 @@ export const CompareIcon = ({ size = 16 }: P) => (
     <path d="M1.6 5.4h5.6" /><path d="M8.8 10.6h5.6" /></svg>
 );
 
+/** Context rising — the shape of the event, not a warning about it. */
+export const RiseIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><path d="M2.4 12.4l3.6-4.2 2.8 2.4 4.8-6" /><path d="M10.4 4.6h3.2v3.2" /></svg>
+);
+
+/** Context compacted: two edges pushed together. */
+export const CompressIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><path d="M2.4 8h11.2" /><path d="M5.6 4.4L8 6.8l2.4-2.4" />
+    <path d="M5.6 11.6L8 9.2l2.4 2.4" /></svg>
+);
+
+export const ClockIcon = ({ size = 16 }: P) => (
+  <svg {...box(size)}><circle cx="8" cy="8" r="6.2" /><path d="M8 4.6V8l2.4 1.6" /></svg>
+);
+
 export const ListIcon = ({ size = 16 }: P) => (
   <svg {...box(size)}><path d="M2.6 4.2h10.8M2.6 8h10.8M2.6 11.8h6.8" /></svg>
 );

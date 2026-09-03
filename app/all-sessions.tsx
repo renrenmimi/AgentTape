@@ -125,6 +125,7 @@ export default function AllSessions({ onOpen, onBack, backLabel }: Props) {
   const [cacheBytes, setCacheBytes] = useState(0);
   const [shown, setShown] = useState<string[]>(DEFAULT_COLS);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const [mounted, setMounted] = useState(false);
   const dirInput = useRef<HTMLInputElement>(null);
   const { sessions: helperSessions, probing, asked, failed, probe } = useHelperSessions();
@@ -258,29 +259,29 @@ export default function AllSessions({ onOpen, onBack, backLabel }: Props) {
           </button>
           <h1 className="view-title">Local sessions</h1>
           <p className="view-lede">
-            Sessions from a folder you grant this page access to, or from the local helper.
-            Nothing is scanned without being asked for, and no session title, first message or
-            summary appears here — every one of those is written from a prompt.
+            Every session in a folder you point this page at, as statistics.
           </p>
         </header>
 
         {source === "" && (
-          <div className="routes">
-            <section className="route">
-              <h2 className="route-title">In this browser</h2>
-              <p className="route-note">
-                Grant this page read access to <code>~/.claude/projects</code> and it builds the
-                index itself. {SUPPORT_NOTE[support]}
+          <>
+            <section className="pick" aria-labelledby="pick-title">
+              <h2 className="pick-title" id="pick-title">Choose a folder</h2>
+              <p className="pick-note">
+                Point it at <code>~/.claude/projects</code>. <b>Nothing is uploaded</b> — the
+                files are read here, in your browser, and this page never looks at a folder you
+                have not handed it.
               </p>
+
               {support === "directory-picker" && (
-                <button type="button" className="btn btn-primary" onClick={pickFolder}>
+                <button type="button" className="btn btn-primary btn-lead" onClick={pickFolder}>
                   <FolderIcon />
                   <span>Choose a folder</span>
                 </button>
               )}
               {support === "webkitdirectory" && (
                 <>
-                  <button type="button" className="btn btn-primary"
+                  <button type="button" className="btn btn-primary btn-lead"
                     onClick={() => dirInput.current?.click()}>
                     <FolderIcon />
                     <span>Choose a folder</span>
@@ -297,59 +298,75 @@ export default function AllSessions({ onOpen, onBack, backLabel }: Props) {
                       if (list.length) void runLocal(async () => collectFromFiles(list));
                     }}
                   />
+                  <p className="pick-caveat">{SUPPORT_NOTE.webkitdirectory}</p>
                 </>
               )}
               {support === "none" && (
-                <p className="empty-line">
-                  This browser offers neither a folder handle nor a folder input, so this route is
-                  not available here.
+                <p className="note note-warning">
+                  <span className="note-text">{SUPPORT_NOTE.none}</span>
                 </p>
               )}
+
+              <p className="pick-caveat">
+                No session title, first message or summary appears in the table. Every one of
+                those is written from a prompt.
+              </p>
             </section>
 
-            <section className="route">
-              <h2 className="route-title">From the local helper</h2>
-              {!mounted ? (
-                <p className="route-note">Checking what is available here…</p>
-              ) : helperHere ? (
-                <>
-                  <p className="route-note">
-                    {probing && "Looking for the helper on 127.0.0.1…"}
-                    {!probing && failed &&
-                      "Nothing answered on 127.0.0.1:4319. Start it with npm run helper."}
-                    {!probing && !failed && helperAnswered &&
-                      "The helper is answering and has already walked the directory."}
-                    {!probing && !failed && !helperAnswered &&
-                      "The helper walks ~/.claude/projects for you and serves the index over loopback."}
-                  </p>
-                  <div className="route-actions">
-                    <button type="button" className="btn btn-primary"
-                      onClick={fromHelper} disabled={probing}>
-                      Use the helper
-                    </button>
-                    {!probing && (
-                      <button type="button" className="btn" onClick={probe}>
-                        {asked ? "Look again" : "Look for it"}
-                      </button>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="route-note">
-                    <b>Available when AgentTape is running locally.</b> The helper serves your
-                    sessions over <code>127.0.0.1</code>, and a browser will not let a page on
-                    this address reach that — which is the boundary working, not a fault.
-                  </p>
-                  <p className="route-note">
-                    To use it: clone the repository, run <code>npm run helper</code> and{" "}
-                    <code>npm run dev</code>, and open the copy served from{" "}
-                    <code>localhost</code>. This page makes no request to loopback.
-                  </p>
-                </>
+            <section className="advanced">
+              <button
+                type="button"
+                className="details-toggle details-toggle-sm"
+                aria-expanded={advanced}
+                onClick={() => setAdvanced((v) => !v)}
+              >
+                <span className="details-caret" aria-hidden>{advanced ? "−" : "+"}</span>
+                <span>Run locally for the helper</span>
+                <span className="details-hint">
+                  a second route, and the only one that can open a session by row
+                </span>
+              </button>
+
+              {advanced && (
+                <div className="fold-body">
+                  {!mounted ? (
+                    <p className="empty-line">Checking what is available here…</p>
+                  ) : helperHere ? (
+                    <>
+                      <p className="sec-lead">
+                        {probing && "Looking for the helper on 127.0.0.1…"}
+                        {!probing && failed &&
+                          "Nothing answered on 127.0.0.1:4319. Start it with npm run helper."}
+                        {!probing && !failed && helperAnswered &&
+                          "The helper is answering and has already walked the directory."}
+                        {!probing && !failed && !helperAnswered &&
+                          "The helper walks ~/.claude/projects for you and serves the index over " +
+                          "loopback. It is also the only route that can open a session by clicking " +
+                          "its row."}
+                      </p>
+                      <div className="route-actions">
+                        <button type="button" className="btn" onClick={fromHelper} disabled={probing}>
+                          Use the helper
+                        </button>
+                        {!probing && (
+                          <button type="button" className="btn btn-quiet" onClick={probe}>
+                            {asked ? "Look again" : "Look for it"}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="sec-lead">
+                      <b>Available when AgentTape is running locally.</b> The helper answers on{" "}
+                      <code>127.0.0.1</code>, and a browser will not let a page on this address
+                      reach it. To use it, clone the repository and run <code>npm run helper</code>{" "}
+                      alongside <code>npm run dev</code>. This page makes no request to loopback.
+                    </p>
+                  )}
+                </div>
               )}
             </section>
-          </div>
+          </>
         )}
 
         {source === "" && cacheBytes > 0 && (

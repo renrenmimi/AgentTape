@@ -1,30 +1,50 @@
 "use client";
 
-// Where you are in the run: one tick per step, thirty pixels tall.
+// Where you are in the run, and what is worth going to.
 //
-// This used to be four stacked bands — ticks, a failure rail, a row of clock
-// labels and an elapsed-time axis — eighty-four pixels of it, above a context
-// chart, above the content. That is a lot of instrument to read before you can
-// start. The elapsed-time half was not wrong, it was in the wrong place: it
-// now lives in the Context view next to the durations it explains, and what is
-// left here is a position control.
+// The rail this replaces gave every step its own small shape from a vocabulary
+// of eight. It was honest — shape carried kind, so the rail stayed readable
+// with no colour perception at all — and it was unreadable in a different way:
+// thirty-one equally weighted glyphs, none of which a first-time reader could
+// name, competing with each other inside a strip thirty pixels tall.
 //
-// Two canvases on top of each other. The lower one holds the ticks and is
-// repainted when the tape, the size, the filter or the theme changes; the
-// upper one holds the playhead and is repainted on every move, so dragging
-// across ten thousand steps costs one line and a triangle per frame.
+// The grammar is now **height and colour**, with three levels and no more:
 //
-// A focusable div covers both and carries the slider semantics, because canvas
-// has none.
+//   quiet   an ordinary step is a short grey tick and a tool call a slightly
+//           taller one. Texture, not information — which step it is and what
+//           kind it is are in the list beside the rail.
+//   event   a failure, a compaction and a delegation are tall and carry a
+//           semantic colour, and a different silhouette each, so the three are
+//           still told apart with no colour at all.
+//   now     the current step is a full-height line with a filled triangle.
+//
+// The events are also real buttons layered over the canvas: focusable, named,
+// and each one a way to get there. The canvas draws the texture; the DOM
+// carries the meaning. Past MAX_MARKS events the buttons are dropped, because
+// six hundred focus stops is not an accessibility feature.
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Step } from "@/lib/format";
 import { stepLabel } from "@/lib/labels";
+import { fmtInt } from "@/lib/summary";
 import { ctx2d } from "./canvas";
 
 const PAD = 8;
-export const TRACK_H = 30;
-const RAIL_Y = 15;
+export const TRACK_H = 32;
+const BASE_Y = 20;
+
+/** Above this many notable events, the rail stops emitting focus stops. */
+export const MAX_MARKS = 60;
+
+type MarkKind = "fail" | "compaction" | "delegation";
+
+type Mark = {
+  /** Position in the view, which is what `onPos` takes. */
+  pos: number;
+  kind: MarkKind;
+  /** The whole label, as a person would read it out. */
+  text: string;
+};
 
 type Props = {
   steps: Step[];
@@ -36,9 +56,9 @@ type Props = {
   delegated?: Uint8Array | null;
   /** n and p. The owner decides whether they mean failures or matches. */
   onSeek?: (dir: 1 | -1) => void;
-  /** What a step is called on screen, for the slider's spoken value. */
+  /** What a step is called on screen. */
   shownIndex?: (globalIndex: number) => number;
-  /** The tool a step belongs to, so the spoken value names it. */
+  /** The tool a step belongs to, so a result names the tool it answers. */
   toolOf?: (globalIndex: number) => string;
   height?: number;
 };
@@ -47,8 +67,8 @@ type Props = {
 // reading them forces a style recalc. They are read once per theme change and
 // held, because the playhead repaints on every frame of a drag.
 const NAMES = [
-  "--chart-tick", "--chart-tick-tool", "--chart-fail", "--chart-grid",
-  "--chart-selected", "--text-accent",
+  "--chart-step", "--chart-tool", "--chart-fail", "--chart-warn", "--chart-grid",
+  "--chart-selected", "--accent",
 ];
 type Palette = Record<string, string>;
 let palette: Palette | null = null;
@@ -69,82 +89,23 @@ function forgetPalette(): void {
   palette = null;
 }
 
-/** The cross that marks a failure, drawn over whatever shape the step had.
- *  Failure is never signalled by colour alone: the tick changes shape here,
- *  and the list and the panels say "failed" in words. */
-function drawFail(g: CanvasRenderingContext2D, x: number, y: number, wide: boolean) {
-  if (!wide) {
-    // At tight spacing a failure is twice as wide and taller than its
-    // neighbours, so it still reads as different with no colour at all.
-    g.fillRect(x - 1, y - 8, 2, 16);
-    return;
-  }
-  g.beginPath();
-  g.moveTo(x - 3.8, y - 3.8);
-  g.lineTo(x + 3.8, y + 3.8);
-  g.moveTo(x + 3.8, y - 3.8);
-  g.lineTo(x - 3.8, y + 3.8);
-  g.stroke();
-}
-
-/** The same eight shapes the legend draws, at tick scale. */
-function drawGlyph(g: CanvasRenderingContext2D, kind: string, x: number, y: number, wide: boolean) {
-  if (!wide) {
-    // Below ~3px of spacing the shapes stop being distinguishable, so the rail
-    // degrades to a density plot rather than lying about resolution.
-    g.fillRect(x - 0.5, y - 5, 1, 10);
-    return;
-  }
-  switch (kind) {
-    case "user":
-      g.fillRect(x - 2.5, y - 2.5, 5, 5);
-      break;
-    case "text":
-      g.fillRect(x - 3.5, y - 1, 7, 2);
-      break;
-    case "thinking":
-      g.beginPath();
-      g.arc(x, y, 2.4, 0, Math.PI * 2);
-      g.stroke();
-      break;
-    case "tool-call":
-      g.beginPath();
-      g.moveTo(x, y - 3.4);
-      g.lineTo(x + 3.2, y + 2.4);
-      g.lineTo(x - 3.2, y + 2.4);
-      g.closePath();
-      g.fill();
-      break;
-    case "tool-result":
-      g.beginPath();
-      g.moveTo(x, y + 3.4);
-      g.lineTo(x + 3.2, y - 2.4);
-      g.lineTo(x - 3.2, y - 2.4);
-      g.closePath();
-      g.stroke();
-      break;
-    case "system":
-      g.beginPath();
-      g.moveTo(x - 3, y);
-      g.lineTo(x + 3, y);
-      g.moveTo(x, y - 3);
-      g.lineTo(x, y + 3);
-      g.stroke();
-      break;
-    case "attachment":
-      g.beginPath();
-      g.moveTo(x, y - 3);
-      g.lineTo(x + 3, y);
-      g.lineTo(x, y + 3);
-      g.lineTo(x - 3, y);
-      g.closePath();
-      g.stroke();
-      break;
-    default:
-      g.beginPath();
-      g.arc(x, y, 1.2, 0, Math.PI * 2);
-      g.fill();
-  }
+/**
+ * What to say about a step, in the form the tooltip and the marker share.
+ *
+ * Short on purpose. The rail is a thing you glance at, and a sentence in a
+ * tooltip is a sentence nobody finishes reading.
+ */
+export function railLabel(
+  s: Step,
+  shown: number,
+  tool: string,
+  delegated: boolean,
+): string {
+  const at = `Step ${fmtInt(shown)}`;
+  if (s.err) return tool ? `${at} · ${tool} failed` : `${at} · failed`;
+  if (s.compact) return `${at} · Context compaction`;
+  if (delegated) return `${at} · Delegated to a subagent`;
+  return `${at} · ${stepLabel(s, tool)}`;
 }
 
 export default function Timeline({
@@ -158,6 +119,8 @@ export default function Timeline({
   const dragging = useRef(false);
   const raf = useRef(0);
   const pending = useRef(-1);
+  /** Which step the tooltip is describing, or -1 for none. */
+  const [tipAt, setTipAt] = useState(-1);
 
   const n = steps.length;
 
@@ -170,6 +133,41 @@ export default function Timeline({
       Math.max(0, Math.min(n - 1, Math.floor(((x - PAD) / (w - PAD * 2)) * n))),
     [n],
   );
+  /** The same position as a fraction of the marks layer, which is inset by PAD. */
+  const fracOf = useCallback((i: number) => (n ? (i + 0.5) / n : 0), [n]);
+
+  const label = useCallback(
+    (i: number) => {
+      const s = steps[i];
+      if (!s) return "";
+      return railLabel(
+        s,
+        shownIndex ? shownIndex(s.i) || i + 1 : i + 1,
+        toolOf?.(s.i) ?? s.tool,
+        delegated?.[i] === 1,
+      );
+    },
+    [steps, shownIndex, toolOf, delegated],
+  );
+
+  /** Every event on the rail, in order. An ordinary step is not an event. */
+  const marks = useMemo<Mark[]>(() => {
+    const out: Mark[] = [];
+    for (let i = 0; i < n; i++) {
+      const s = steps[i];
+      const kind: MarkKind | null = s.err
+        ? "fail"
+        : s.compact
+          ? "compaction"
+          : delegated?.[i] === 1
+            ? "delegation"
+            : null;
+      if (!kind) continue;
+      out.push({ pos: i, kind, text: label(i) });
+      if (out.length > MAX_MARKS) return [];
+    }
+    return out;
+  }, [n, steps, delegated, label]);
 
   // ---- static layer -------------------------------------------------------
 
@@ -187,153 +185,105 @@ export default function Timeline({
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
 
-    const tick = cssVar("--chart-tick") || "#6b7686";
-    const tool = cssVar("--chart-tick-tool") || "#4a6bc4";
-    const risk = cssVar("--chart-fail") || "#b42318";
-    const grid = cssVar("--chart-grid") || "#dde4ee";
-    const accent = cssVar("--text-accent") || "#2f52b0";
+    const quiet = cssVar("--chart-step") || "#97a1b2";
+    const toolCol = cssVar("--chart-tool") || "#7b88a6";
+    const fail = cssVar("--chart-fail") || "#af4854";
+    const warn = cssVar("--chart-warn") || "#8a681a";
+    const grid = cssVar("--chart-grid") || "#dde3ed";
+    const accent = cssVar("--accent") || "#6f82e6";
 
-    // The baseline sits under the glyphs rather than through them. Through
-    // them it is a line across every column of the rail, which is both uglier
-    // and — since the self-test counts painted ticks by reading the pixels
-    // back — a continuous smear that makes every column look occupied.
+    // The run itself: one hairline the whole way across, so the extent of the
+    // session is visible even where nothing happened.
     g.strokeStyle = grid;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(PAD, TRACK_H - 3.5);
-    g.lineTo(w - PAD, TRACK_H - 3.5);
+    g.moveTo(PAD, BASE_Y + 0.5);
+    g.lineTo(w - PAD, BASE_Y + 0.5);
     g.stroke();
 
-    const spacing = (w - PAD * 2) / Math.max(1, n);
-    const wide = spacing >= 3;
     const cols = Math.max(1, Math.floor(w - PAD * 2));
-    g.lineWidth = 1.25;
+    const dimAt = (i: number) => (mask && mask[i] === 0 ? 0.25 : 1);
+    const isEvent = (i: number) =>
+      steps[i].err || !!steps[i].compact || delegated?.[i] === 1;
 
-    if (wide) {
-      // Few enough steps that each gets its own shape. Dimmed first, matching
-      // over the top, failures last, so nothing important is painted over.
-      const passes: { keep: (i: number) => boolean; scale: number }[] = mask
-        ? [{ keep: (i) => !mask[i], scale: 0.22 }, { keep: (i) => !!mask[i], scale: 1 }]
-        : [{ keep: () => true, scale: 1 }];
-
-      for (const pass of passes) {
-        let lastKind = "";
-        let lastAlpha = -1;
+    // ---- texture ----------------------------------------------------------
+    {
+      if (n <= cols) {
         for (let i = 0; i < n; i++) {
+          if (isEvent(i)) continue;
           const s = steps[i];
-          if (s.err || !pass.keep(i)) continue;
-          const alpha = (s.kind === "meta" ? 0.5 : 0.9) * pass.scale;
-          if (s.kind !== lastKind) {
-            const col = s.kind === "tool-call" || s.kind === "tool-result" ? tool : tick;
-            g.fillStyle = col;
-            g.strokeStyle = col;
-            lastKind = s.kind;
-          }
-          if (alpha !== lastAlpha) { g.globalAlpha = alpha; lastAlpha = alpha; }
-          drawGlyph(g, s.kind, xOf(i, w), RAIL_Y, wide);
-        }
-      }
-
-      g.fillStyle = risk;
-      g.strokeStyle = risk;
-      g.lineWidth = 1.6;
-      for (const pass of passes) {
-        g.globalAlpha = pass.scale;
-        for (let i = 0; i < n; i++) {
-          if (!steps[i].err || !pass.keep(i)) continue;
-          drawFail(g, xOf(i, w), RAIL_Y, wide);
-        }
-      }
-    } else {
-      // Below three pixels a step no longer has a shape of its own, and many
-      // share a column. Deciding what each column holds first turns ~7,700
-      // draw calls into ~1,500, which is what keeps a repaint on every
-      // keystroke of a search cheap enough to keep up.
-      const tone = new Uint8Array(cols);   // 0 empty · 1 ordinary · 2 tool
-      const solid = new Uint8Array(cols);  // holds at least one non-meta step
-      const held = new Uint16Array(cols);
-      const hits = new Uint16Array(cols);
-      const err = new Uint8Array(cols);
-      const errHit = new Uint8Array(cols);
-
-      for (let i = 0; i < n; i++) {
-        const s = steps[i];
-        const c = Math.min(cols - 1, Math.max(0, Math.floor(xOf(i, w) - PAD)));
-        const matched = !mask || mask[i] === 1;
-        if (s.err) {
-          err[c] = 1;
-          if (matched) errHit[c] = 1;
-          continue;
-        }
-        const t = s.kind === "tool-call" || s.kind === "tool-result" ? 2 : 1;
-        if (t > tone[c]) tone[c] = t;
-        if (s.kind !== "meta") solid[c] = 1;
-        held[c]++;
-        if (matched) hits[c]++;
-      }
-
-      if (!mask) {
-        let lastStyle = -1;
-        for (let c = 0; c < cols; c++) {
-          if (!tone[c]) continue;
-          const style = tone[c] * 2 + solid[c];
-          if (style !== lastStyle) {
-            g.fillStyle = tone[c] === 2 ? tool : tick;
-            g.globalAlpha = solid[c] ? 0.9 : 0.5;
-            lastStyle = style;
-          }
-          g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
+          const isTool = s.kind === "tool-call" || s.kind === "tool-result";
+          g.globalAlpha = dimAt(i) * (s.kind === "meta" ? 0.5 : 1);
+          g.fillStyle = isTool ? toolCol : quiet;
+          const tall = isTool ? 5 : 3;
+          g.fillRect(Math.round(xOf(i, w)), BASE_Y - tall, 1, tall * 2);
         }
       } else {
-        // A column holds about five steps, so "bright if any of them matched"
-        // would light up the whole rail and say nothing. The dim base is every
-        // step — position and density stay honest — and the bright bar's
-        // *height* is the share of that column that matched, which makes a
-        // filtered rail a density plot rather than a blanket.
-        g.globalAlpha = 0.22;
-        g.fillStyle = tick;
-        for (let c = 0; c < cols; c++) {
-          if (tone[c]) g.fillRect(PAD + c, RAIL_Y - 5, 1, 10);
+        // More steps than pixels. Each column reports how much of it is tool
+        // work and how much of it matched, which keeps a filtered rail a
+        // density plot instead of a blanket.
+        const held = new Uint16Array(cols);
+        const hits = new Uint16Array(cols);
+        const tools = new Uint16Array(cols);
+        for (let i = 0; i < n; i++) {
+          if (isEvent(i)) continue;
+          const s = steps[i];
+          const c = Math.min(cols - 1, Math.max(0, Math.floor(xOf(i, w) - PAD)));
+          held[c]++;
+          if (!mask || mask[i] === 1) hits[c]++;
+          if (s.kind === "tool-call" || s.kind === "tool-result") tools[c]++;
         }
-        g.globalAlpha = 1;
-        let lastTone = -1;
         for (let c = 0; c < cols; c++) {
-          if (!hits[c]) continue;
-          if (tone[c] !== lastTone) {
-            g.fillStyle = tone[c] === 2 ? tool : tick;
-            lastTone = tone[c];
-          }
-          const bh = Math.max(3, Math.round((10 * hits[c]) / held[c]));
-          g.fillRect(PAD + c, RAIL_Y - bh / 2, 1, bh);
+          if (!held[c]) continue;
+          const toolish = tools[c] * 2 > held[c];
+          g.globalAlpha = mask ? 0.25 + 0.75 * (hits[c] / held[c]) : 1;
+          g.fillStyle = toolish ? toolCol : quiet;
+          const tall = toolish ? 5 : 3;
+          g.fillRect(PAD + c, BASE_Y - tall, 1, tall * 2);
         }
       }
-
-      g.fillStyle = risk;
-      let lastErrAlpha = -1;
-      for (let c = 0; c < cols; c++) {
-        if (!err[c]) continue;
-        const alpha = mask && !errHit[c] ? 0.22 : 1;
-        if (alpha !== lastErrAlpha) { g.globalAlpha = alpha; lastErrAlpha = alpha; }
-        g.fillRect(PAD + c - 1, RAIL_Y - 8, 2, 16);
-      }
+      g.globalAlpha = 1;
     }
 
-    // Delegations, over everything else. A handful per session, and each one
-    // stands for a whole run this file does not contain.
-    if (delegated) {
-      g.strokeStyle = accent;
-      g.fillStyle = accent;
-      g.lineWidth = 1.3;
-      for (let i = 0; i < n; i++) {
-        if (!delegated[i]) continue;
-        g.globalAlpha = mask && !mask[i] ? 0.3 : 1;
-        const x = Math.round(xOf(i, w)) + 0.5;
+    // ---- events -----------------------------------------------------------
+    //
+    // Tall, semantic, and a different silhouette each: a failure is a bar with
+    // a square cap, a compaction a bar with a diamond, a delegation a dot on a
+    // stem. Colour is the fast read; the cap is the one that survives without
+    // it.
+    for (let i = 0; i < n; i++) {
+      const s = steps[i];
+      const isFail = s.err;
+      const isCompact = !isFail && !!s.compact;
+      const isDeleg = !isFail && !isCompact && delegated?.[i] === 1;
+      if (!isFail && !isCompact && !isDeleg) continue;
+      const x = Math.round(xOf(i, w)) + 0.5;
+      g.globalAlpha = dimAt(i);
+
+      if (isFail) {
+        g.fillStyle = fail;
+        g.fillRect(x - 1, BASE_Y - 9, 2, 18);
+        g.fillRect(x - 3, BASE_Y - 12, 6, 3);
+      } else if (isCompact) {
+        g.fillStyle = warn;
+        g.fillRect(x - 1, BASE_Y - 6, 2, 15);
         g.beginPath();
-        g.moveTo(x, RAIL_Y - 9);
-        g.lineTo(x, RAIL_Y - 5);
+        g.moveTo(x, BASE_Y - 13);
+        g.lineTo(x + 4, BASE_Y - 9);
+        g.lineTo(x, BASE_Y - 5);
+        g.lineTo(x - 4, BASE_Y - 9);
+        g.closePath();
+        g.fill();
+      } else {
+        g.strokeStyle = accent;
+        g.fillStyle = accent;
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(x, BASE_Y - 4);
+        g.lineTo(x, BASE_Y + 7);
         g.stroke();
         g.beginPath();
-        g.arc(x, RAIL_Y - 11, 1.7, 0, Math.PI * 2);
+        g.arc(x, BASE_Y - 9, 2.8, 0, Math.PI * 2);
         g.fill();
       }
     }
@@ -360,21 +310,21 @@ export default function Timeline({
       g.clearRect(0, 0, w, h);
       if (!steps[Math.max(0, Math.min(n - 1, p))]) return;
 
-      const accent = cssVar("--chart-selected") || "#315ccd";
-      const x = xOf(p, w);
+      const now = cssVar("--chart-selected") || "#5f70c6";
+      const x = Math.round(xOf(p, w)) + 0.5;
 
-      g.strokeStyle = accent;
-      g.lineWidth = 1.5;
+      g.strokeStyle = now;
+      g.lineWidth = 2;
       g.beginPath();
-      g.moveTo(Math.round(x) + 0.5, 5);
-      g.lineTo(Math.round(x) + 0.5, h - 3);
+      g.moveTo(x, 7);
+      g.lineTo(x, h - 1);
       g.stroke();
 
-      g.fillStyle = accent;
+      g.fillStyle = now;
       g.beginPath();
-      g.moveTo(x, 6);
-      g.lineTo(x + 4.5, 0);
-      g.lineTo(x - 4.5, 0);
+      g.moveTo(x, 8);
+      g.lineTo(x + 5, 0);
+      g.lineTo(x - 5, 0);
       g.closePath();
       g.fill();
     },
@@ -435,8 +385,10 @@ export default function Timeline({
     commit(fromEvent(e));
   };
   const onMove = (e: React.PointerEvent) => {
+    const i = fromEvent(e);
+    setTipAt(i);
     if (!dragging.current) return;
-    commit(fromEvent(e));
+    commit(i);
   };
   const onUp = (e: React.PointerEvent) => {
     dragging.current = false;
@@ -461,13 +413,18 @@ export default function Timeline({
   };
 
   const cur = steps[Math.max(0, Math.min(n - 1, pos))];
-  const shown = cur && shownIndex ? shownIndex(cur.i) || pos + 1 : pos + 1;
-  const valueText = cur
-    ? `step ${shown} of ${n}, ${stepLabel(cur, toolOf?.(cur.i))}${cur.err ? ", failed" : ""}`
-    : "no steps";
+  const valueText = cur ? label(Math.min(n - 1, pos)) : "no steps";
+  const tipStep = Math.max(0, Math.min(n - 1, tipAt));
+  const tip = tipAt >= 0 && n ? label(tipStep) : "";
+  const tipFrac = fracOf(tipStep);
 
   return (
-    <div className="track" ref={wrap} style={{ height }}>
+    <div
+      className="track"
+      ref={wrap}
+      style={{ height }}
+      onPointerLeave={() => setTipAt(-1)}
+    >
       <canvas ref={base} aria-hidden />
       <canvas ref={head} aria-hidden />
       <div
@@ -475,7 +432,7 @@ export default function Timeline({
         ref={hit}
         role="slider"
         tabIndex={0}
-        aria-label="Position in the session. Arrow keys step, Home and End jump to the ends, n and p jump to the next and previous failed step."
+        aria-label="Position in the session. Arrow keys step, Home and End jump to the ends, n and p jump to the next and previous failure."
         aria-valuemin={1}
         aria-valuemax={Math.max(1, n)}
         aria-valuenow={pos + 1}
@@ -484,8 +441,38 @@ export default function Timeline({
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={onUp}
+        onFocus={() => setTipAt(pos)}
+        onBlur={() => setTipAt(-1)}
         onKeyDown={onKey}
       />
+
+      {marks.length > 0 && (
+        <div className="track-marks">
+          {marks.map((m) => (
+            <button
+              type="button"
+              key={m.kind + ":" + m.pos}
+              className={"track-mark track-mark-" + m.kind}
+              style={{ left: fracOf(m.pos) * 100 + "%" }}
+              aria-label={m.text + ". Go to it."}
+              onFocus={() => setTipAt(m.pos)}
+              onBlur={() => setTipAt(-1)}
+              onPointerEnter={() => setTipAt(m.pos)}
+              onClick={() => onPos(m.pos)}
+            />
+          ))}
+        </div>
+      )}
+
+      {tip && (
+        <div
+          className={"track-tip" + (tipFrac > 0.72 ? " track-tip-end" : "")}
+          role="status"
+          style={{ left: tipFrac * 100 + "%" }}
+        >
+          {tip}
+        </div>
+      )}
     </div>
   );
 }
